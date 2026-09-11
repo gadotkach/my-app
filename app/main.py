@@ -2,8 +2,11 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.database import engine
+from app.routers import users
 
 app = FastAPI(title="My App")
+
+app.include_router(users.router)
 
 
 @app.get("/health")
