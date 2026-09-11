@@ -8,11 +8,13 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+
+from app import models  # noqa: F401
 from app.config import settings
 from app.database import Base
 from app.deps import get_session
 from app.main import app as fastapi_app
-from app import models  # noqa: F401
+
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
