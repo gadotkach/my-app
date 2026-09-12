@@ -15,6 +15,9 @@ class Settings(BaseSettings):
         url = self.database_url
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # asyncpg не понимает ?sslmode= в URL — убираем его
+        if "?sslmode=" in url:
+            url = url.split("?sslmode=")[0]
         return url
 
 
