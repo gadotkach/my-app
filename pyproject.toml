@@ -44,3 +44,5 @@ exclude = ["alembic/", "tests/"]
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
 ignore_missing_imports = true
+[tool.setuptools]
+packages = ["app"]
