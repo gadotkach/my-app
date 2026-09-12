@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_session
+from app.deps import get_current_user, get_session
 from app.models import User
 from app.schemas import UserCreate, UserRead
 
@@ -20,7 +20,13 @@ async def create_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="User with this email already exists",
         )
-    user = User(email=payload.email, name=payload.name)
+    from app.security import hash_password
+
+    user = User(
+        email=payload.email,
+        name=payload.name,
+        hashed_password=hash_password(payload.password),
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -33,6 +39,11 @@ async def list_users(
 ) -> list[User]:
     result = await session.scalars(select(User).order_by(User.id))
     return list(result.all())
+
+
+@router.get("/me", response_model=UserRead)
+async def read_me(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
 
 
 @router.get("/{user_id}", response_model=UserRead)

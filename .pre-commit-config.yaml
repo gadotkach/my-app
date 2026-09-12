@@ -28,3 +28,5 @@ repos:
           - pydantic-settings==2.6.1
           - sqlalchemy==2.0.36
           - fastapi==0.115.0
+          - types-python-jose
+          - types-passlib

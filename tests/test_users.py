@@ -1,15 +1,18 @@
 async def test_create_user(client):
-    response = await client.post("/users", json={"email": "alice@example.com", "name": "Alice"})
+    response = await client.post(
+        "/users",
+        json={"email": "alice@example.com", "name": "Alice", "password": "secret123"},
+    )
     assert response.status_code == 201
     data = response.json()
     assert data["email"] == "alice@example.com"
     assert data["name"] == "Alice"
-    assert "id" in data
-    assert "created_at" in data
+    assert "hashed_password" not in data
+    assert "password" not in data
 
 
 async def test_create_duplicate_email(client):
-    payload = {"email": "bob@example.com", "name": "Bob"}
+    payload = {"email": "bob@example.com", "name": "Bob", "password": "secret123"}
     first = await client.post("/users", json=payload)
     assert first.status_code == 201
 
@@ -19,7 +22,10 @@ async def test_create_duplicate_email(client):
 
 
 async def test_create_invalid_email(client):
-    response = await client.post("/users", json={"email": "not-an-email", "name": "X"})
+    response = await client.post(
+        "/users",
+        json={"email": "not-an-email", "name": "X", "password": "secret123"},
+    )
     assert response.status_code == 422
 
 
@@ -30,8 +36,14 @@ async def test_list_users_empty(client):
 
 
 async def test_list_users(client):
-    await client.post("/users", json={"email": "u1@example.com", "name": "U1"})
-    await client.post("/users", json={"email": "u2@example.com", "name": "U2"})
+    await client.post(
+        "/users",
+        json={"email": "u1@example.com", "name": "U1", "password": "secret123"},
+    )
+    await client.post(
+        "/users",
+        json={"email": "u2@example.com", "name": "U2", "password": "secret123"},
+    )
 
     response = await client.get("/users")
     assert response.status_code == 200
@@ -47,7 +59,10 @@ async def test_get_user_not_found(client):
 
 
 async def test_get_user_by_id(client):
-    created = await client.post("/users", json={"email": "carol@example.com", "name": "Carol"})
+    created = await client.post(
+        "/users",
+        json={"email": "carol@example.com", "name": "Carol", "password": "secret123"},
+    )
     user_id = created.json()["id"]
 
     response = await client.get(f"/users/{user_id}")

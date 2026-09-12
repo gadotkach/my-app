@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.database import engine
-from app.routers import users
+from app.routers import auth, users
 
 app = FastAPI(title="My App")
 
+app.include_router(auth.router)
 app.include_router(users.router)
 
 
