@@ -65,3 +65,48 @@ async def test_me_with_token(client):
     response = await client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["email"] == "me@example.com"
+
+
+async def test_refresh_success(client):
+    await client.post(
+        "/auth/register",
+        json={"email": "ref@example.com", "name": "R", "password": "secret123"},
+    )
+    login = await client.post(
+        "/auth/login",
+        json={"email": "ref@example.com", "name": "x", "password": "secret123"},
+    )
+    assert login.status_code == 200
+    assert "refresh_token" in login.cookies
+
+    response = await client.post("/auth/refresh")
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+async def test_refresh_without_cookie(client):
+    response = await client.post("/auth/refresh")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "No refresh token"
+
+
+async def test_logout_revokes_refresh(client):
+    await client.post(
+        "/auth/register",
+        json={"email": "logout@example.com", "name": "L", "password": "secret123"},
+    )
+    login = await client.post(
+        "/auth/login",
+        json={"email": "logout@example.com", "name": "x", "password": "secret123"},
+    )
+    assert login.status_code == 200
+    assert "refresh_token" in login.cookies
+
+    logout = await client.post("/auth/logout")
+    assert logout.status_code == 204
+
+    # После logout refresh должен вернуть 401
+    response = await client.post("/auth/refresh")
+    assert response.status_code == 401

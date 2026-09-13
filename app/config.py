@@ -7,7 +7,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "CHANGE_ME"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    jwt_refresh_expire_days: int = 30
     encryption_key: str = "CHANGE_ME"
+    cookie_secure: bool = False  # True в продакшене (HTTPS)
+    cookie_domain: str | None = None  # None для localhost
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

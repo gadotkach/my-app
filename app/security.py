@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,3 +32,13 @@ def decode_access_token(token: str) -> str | None:
         return None
     sub = payload.get("sub")
     return str(sub) if sub is not None else None
+
+
+def generate_refresh_token() -> str:
+    """Случайный refresh-токен (64 hex-символа = 32 байта)."""
+    return secrets.token_hex(32)
+
+
+def hash_refresh_token(token: str) -> str:
+    """SHA-256 хеш refresh-токена для хранения в БД."""
+    return hashlib.sha256(token.encode()).hexdigest()

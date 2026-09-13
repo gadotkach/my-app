@@ -104,6 +104,11 @@ class AnalyticsSummary(BaseModel):
     net_profit: Decimal
 
 
+class RefreshResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
 class MarketplaceStats(BaseModel):
     marketplace_code: str
     marketplace_name: str
