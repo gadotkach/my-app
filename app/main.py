@@ -6,6 +6,7 @@ from app.routers import (
     analytics,
     auth,
     delivery_services,
+    integrations,
     marketplaces,
     products,
     sales,
@@ -21,6 +22,7 @@ app.include_router(delivery_services.router)
 app.include_router(products.router)
 app.include_router(sales.router)
 app.include_router(analytics.router)
+app.include_router(integrations.router)
 
 
 @app.get("/health")

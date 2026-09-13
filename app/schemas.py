@@ -119,3 +119,18 @@ class ProductStats(BaseModel):
     product_name: str | None
     sales_count: int
     total_revenue: Decimal
+
+
+class MarketplaceAccountConnect(BaseModel):
+    marketplace_code: str  # например, "ozon"
+    client_id: str
+    api_key: str
+
+
+class MarketplaceAccountRead(BaseModel):
+    id: int
+    marketplace_code: str
+    client_id: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

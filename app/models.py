@@ -77,3 +77,20 @@ class Sale(Base):
     marketplace: Mapped[Marketplace] = relationship(back_populates="sales")
     product: Mapped[Product | None] = relationship(back_populates="sales")
     delivery_service: Mapped[DeliveryService | None] = relationship(back_populates="sales")
+
+
+class MarketplaceAccount(Base):
+    __tablename__ = "marketplace_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    marketplace_id: Mapped[int] = mapped_column(ForeignKey("marketplaces.id"), index=True)
+    client_id: Mapped[str] = mapped_column(String(100))
+    api_key_encrypted: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship()
+    marketplace: Mapped["Marketplace"] = relationship()

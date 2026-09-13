@@ -1,14 +1,14 @@
 from collections.abc import AsyncGenerator
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models import User
 from app.security import decode_access_token
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
@@ -17,7 +17,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
-    token: str | None = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
     credentials_exception = HTTPException(
@@ -25,11 +25,12 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    if token is None:
+    if credentials is None:
         raise credentials_exception
-    sub = decode_access_token(token)
+    sub = decode_access_token(credentials.credentials)
     if sub is None:
         raise credentials_exception
+    ...
     try:
         user_id = int(sub)
     except ValueError:
