@@ -39,7 +39,7 @@ async def connect_ozon(
     # Проверяем ключи через реальный API Ozon
     try:
         async with OzonClient(payload.client_id, payload.api_key) as ozon:
-            seller_info = await ozon.get_seller_info()
+            await ozon.get_seller_info()
     except OzonClientError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -71,7 +71,6 @@ async def connect_ozon(
         await session.commit()
         await session.refresh(account)
 
-    company = seller_info.get("company", {}) if isinstance(seller_info, dict) else {}
     return MarketplaceAccountRead(
         id=account.id,
         marketplace_code=marketplace.code,
