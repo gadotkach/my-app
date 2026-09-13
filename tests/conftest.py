@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -14,6 +15,7 @@ from app.config import settings
 from app.database import Base
 from app.deps import get_session
 from app.main import app as fastapi_app
+from app.models import DeliveryService, Marketplace, Product, Sale, User
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -58,7 +60,41 @@ async def client(engine) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db(engine):
+    """Clean business data between tests, keep reference data intact."""
+    from app.models import Marketplace
+
     async with engine.begin() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            await conn.execute(table.delete())
+        # Удаляем бизнес-данные, но НЕ справочники (marketplaces, delivery_services)
+        await conn.execute(delete(Sale))
+        await conn.execute(delete(Product))
+        await conn.execute(delete(User))
+        # Пересоздаём справочники (могут быть удалены предыдущим тестом)
+        await conn.execute(delete(Marketplace))
+        await conn.execute(delete(DeliveryService))
+    yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def seed_reference_data(engine, clean_db):
+    """Seed marketplaces and delivery services before each test."""
+    from app.models import DeliveryService
+
+    SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+    async with SessionLocal() as session:
+        marketplaces = [
+            Marketplace(code="ozon", name="Ozon"),
+            Marketplace(code="wildberries", name="Wildberries"),
+            Marketplace(code="yandex_market", name="Яндекс.Маркет"),
+            Marketplace(code="aliexpress", name="AliExpress"),
+            Marketplace(code="avito", name="Авито"),
+        ]
+        delivery_services = [
+            DeliveryService(code="cdek", name="СДЭК"),
+            DeliveryService(code="boxberry", name="Boxberry"),
+            DeliveryService(code="russian_post", name="Почта России"),
+            DeliveryService(code="dhl", name="DHL"),
+        ]
+        session.add_all(marketplaces)
+        session.add_all(delivery_services)
+        await session.commit()
     yield
