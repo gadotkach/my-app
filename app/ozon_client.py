@@ -42,6 +42,31 @@ class OzonClient:
     async def get_seller_info(self) -> dict[str, Any]:
         """Проверка ключей — возвращает информацию о продавце."""
         return await self._post("/v1/seller/info", {})
+    async def list_products(self, limit: int = 1000) -> list[dict[str, Any]]:
+        """Список товаров продавца. Ozon отдаёт постранично, до 1000 за раз."""
+        result: list[dict[str, Any]] = []
+        last_id = ""
+        while True:
+            payload: dict[str, Any] = {"filter": {"visibility": "ALL"}, "limit": limit}
+            if last_id:
+                payload["last_id"] = last_id
+            data = await self._post("/v3/product/list", payload)
+            items = data.get("result", {}).get("items", [])
+            result.extend(items)
+            last_id = data.get("result", {}).get("last_id", "")
+            if not last_id or not items:
+                break
+        return result
+
+    async def get_product_info(self, product_ids: list[int]) -> list[dict[str, Any]]:
+        """Детальная информация по товарам (название, SKU, описание)."""
+        if not product_ids:
+            return []
+        data = await self._post(
+            "/v3/product/info/list",
+            {"product_id": product_ids},
+        )
+        return data.get("items", [])
 
     async def verify_credentials(self) -> bool:
         """True, если ключи рабочие."""

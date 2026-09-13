@@ -2,11 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.crypto import encrypt
+from app.crypto import decrypt, encrypt
 from app.deps import get_current_user, get_session
-from app.models import Marketplace, MarketplaceAccount, User
+from app.models import Marketplace, MarketplaceAccount, Product, User
 from app.ozon_client import OzonClient, OzonClientError
-from app.schemas import MarketplaceAccountConnect, MarketplaceAccountRead
+from app.schemas import (
+    MarketplaceAccountConnect,
+    MarketplaceAccountRead,
+    OzonSyncResult,
+)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -99,3 +103,64 @@ async def list_accounts(
         )
         for account, code in rows
     ]
+@router.post("/ozon/sync/products", response_model=OzonSyncResult)
+async def sync_ozon_products(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OzonSyncResult:
+    account = await session.scalar(
+        select(MarketplaceAccount)
+        .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
+        .where(
+            MarketplaceAccount.user_id == current_user.id,
+            Marketplace.code == "ozon",
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ozon is not connected for this user",
+        )
+
+    api_key = decrypt(account.api_key_encrypted)
+    try:
+        async with OzonClient(account.client_id, api_key) as ozon:
+            ozon_products = await ozon.list_products()
+            product_ids = [int(p["product_id"]) for p in ozon_products if "product_id" in p]
+            details = await ozon.get_product_info(product_ids)
+    except OzonClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    created = 0
+    updated = 0
+    for item in details:
+        sku = str(item.get("sku") or item.get("offer_id") or item.get("id"))
+        name = item.get("name") or "Unnamed"
+        description = item.get("description") or None
+
+        existing = await session.scalar(
+            select(Product).where(
+                Product.user_id == current_user.id,
+                Product.sku == sku,
+            )
+        )
+        if existing is None:
+            session.add(
+                Product(
+                    user_id=current_user.id,
+                    sku=sku,
+                    name=name,
+                    description=description,
+                )
+            )
+            created += 1
+        else:
+            existing.name = name
+            existing.description = description
+            updated += 1
+
+    await session.commit()
+    return OzonSyncResult(synced=len(details), created=created, updated=updated)
