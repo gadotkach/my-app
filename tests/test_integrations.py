@@ -104,9 +104,7 @@ async def test_sync_products_creates_products(client):
     assert data["created"] == 2
     assert data["updated"] == 0
 
-    response = await client.get(
-        "/products", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/products", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     products = response.json()
     assert len(products) == 2

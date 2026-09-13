@@ -103,6 +103,8 @@ async def list_accounts(
         )
         for account, code in rows
     ]
+
+
 @router.post("/ozon/sync/products", response_model=OzonSyncResult)
 async def sync_ozon_products(
     current_user: User = Depends(get_current_user),

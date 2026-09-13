@@ -42,6 +42,7 @@ class OzonClient:
     async def get_seller_info(self) -> dict[str, Any]:
         """Проверка ключей — возвращает информацию о продавце."""
         return await self._post("/v1/seller/info", {})
+
     async def list_products(self, limit: int = 1000) -> list[dict[str, Any]]:
         """Список товаров продавца. Ozon отдаёт постранично, до 1000 за раз."""
         result: list[dict[str, Any]] = []
@@ -66,7 +67,7 @@ class OzonClient:
             "/v3/product/info/list",
             {"product_id": product_ids},
         )
-        return data.get("items", [])
+        return cast(list[dict[str, Any]], data.get("items", []))
 
     async def verify_credentials(self) -> bool:
         """True, если ключи рабочие."""
