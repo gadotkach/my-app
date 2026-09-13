@@ -1,6 +1,3 @@
-from datetime import datetime, timedelta, timezone
-
-
 async def _register_and_login(client, email: str = "analytics@example.com") -> str:
     await client.post(
         "/auth/register",
