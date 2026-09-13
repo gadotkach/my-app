@@ -92,3 +92,30 @@ class DeliveryServiceRead(BaseModel):
     name: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AnalyticsSummary(BaseModel):
+    period_from: datetime
+    period_to: datetime
+    sales_count: int
+    total_revenue: Decimal
+    total_commission: Decimal
+    total_logistics: Decimal
+    net_profit: Decimal
+
+
+class MarketplaceStats(BaseModel):
+    marketplace_code: str
+    marketplace_name: str
+    sales_count: int
+    total_revenue: Decimal
+    total_commission: Decimal
+    total_logistics: Decimal
+    net_profit: Decimal
+
+
+class ProductStats(BaseModel):
+    product_id: int | None
+    product_name: str | None
+    sales_count: int
+    total_revenue: Decimal

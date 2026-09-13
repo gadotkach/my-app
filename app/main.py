@@ -2,7 +2,15 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.database import engine
-from app.routers import auth, delivery_services, marketplaces, products, sales, users
+from app.routers import (
+    analytics,
+    auth,
+    delivery_services,
+    marketplaces,
+    products,
+    sales,
+    users,
+)
 
 app = FastAPI(title="My App")
 
@@ -12,6 +20,7 @@ app.include_router(marketplaces.router)
 app.include_router(delivery_services.router)
 app.include_router(products.router)
 app.include_router(sales.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")
