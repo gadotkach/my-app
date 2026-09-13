@@ -43,9 +43,7 @@ class DeliveryService(Base):
 
 class Product(Base):
     __tablename__ = "products"
-    __table_args__ = (
-        UniqueConstraint("user_id", "sku", name="uq_products_user_sku"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "sku", name="uq_products_user_sku"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
