@@ -1,6 +1,7 @@
 """Seed marketplaces and delivery services. Run once:
 docker compose run --rm api python seed_marketplaces.py
 """
+
 import asyncio
 
 from sqlalchemy import select
