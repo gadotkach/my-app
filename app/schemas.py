@@ -140,3 +140,11 @@ class OzonSyncResult(BaseModel):
     synced: int
     created: int
     updated: int
+
+
+class OzonSyncSalesResult(BaseModel):
+    synced: int
+    created: int
+    updated: int
+    period_from: datetime
+    period_to: datetime

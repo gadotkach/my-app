@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -68,6 +69,58 @@ class OzonClient:
             {"product_id": product_ids},
         )
         return cast(list[dict[str, Any]], data.get("items", []))
+
+    async def list_postings(
+        self,
+        since: str,
+        to: str,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Список FBS-отправлений за период. Ozon отдаёт постранично."""
+        result: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            payload: dict[str, Any] = {
+                "dir": "DESC",
+                "filter": {"since": since, "to": to},
+                "limit": limit,
+                "offset": offset,
+                "with": {"analytics_data": False, "financial_data": True},
+            }
+            data = await self._post("/v3/posting/fbs/list", payload)
+            postings = data.get("result", {}).get("postings", [])
+            result.extend(postings)
+            has_next = data.get("result", {}).get("has_next", False)
+            if not has_next or not postings:
+                break
+            offset += limit
+        return result
+
+    async def list_postings_for_range(
+        self,
+        since: str,
+        to: str,
+    ) -> list[dict[str, Any]]:
+        """Список отправлений за длинный период — разбивает на интервалы по 30 дней."""
+        start = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(to.replace("Z", "+00:00"))
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=UTC)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=UTC)
+
+        chunk = timedelta(days=30)
+        all_postings: list[dict[str, Any]] = []
+        current = start
+        while current < end:
+            chunk_end = min(current + chunk, end)
+            postings = await self.list_postings(
+                since=current.isoformat().replace("+00:00", "Z"),
+                to=chunk_end.isoformat().replace("+00:00", "Z"),
+            )
+            all_postings.extend(postings)
+            current = chunk_end + timedelta(seconds=1)
+        return all_postings
 
     async def verify_credentials(self) -> bool:
         """True, если ключи рабочие."""
