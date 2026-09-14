@@ -22,7 +22,7 @@ from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.info("APP BUILD marker-v2 — require_active_subscription enabled")
+logger.info("APP BUILD yookassa-final-v3 — subscriptions ready")
 logger = logging.getLogger(__name__)
 logger.info("APP BUILD 9271999 — require_active_subscription enabled")
 
