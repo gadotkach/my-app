@@ -1,12 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.deps import get_session
-from app.models import RefreshToken, User
+from app.models import RefreshToken, TrialIdentity, User
 from app.schemas import RefreshResponse, Token, UserCreate, UserRead
 from app.security import (
     create_access_token,
@@ -15,6 +15,7 @@ from app.security import (
     hash_refresh_token,
     verify_password,
 )
+from app.trial import hash_email, hash_identity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -59,6 +60,7 @@ async def _issue_tokens(
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
     payload: UserCreate,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> User:
     existing = await session.scalar(select(User).where(User.email == payload.email))
@@ -67,12 +69,49 @@ async def register(
             status_code=status.HTTP_409_CONFLICT,
             detail="User with this email already exists",
         )
+
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+    identity_hash = hash_identity(client_ip, user_agent)
+    email_hash = hash_email(payload.email)
+
+    identity_used = await session.scalar(
+        select(TrialIdentity).where(TrialIdentity.identity_hash == identity_hash)
+    )
+    email_used = await session.scalar(
+        select(TrialIdentity).where(TrialIdentity.email_hash == email_hash)
+    )
+
+    now = datetime.now(UTC)
+    if identity_used is None and email_used is None:
+        subscription_status = "trialing"
+        trial_started_at = now
+        trial_ends_at = now + timedelta(days=settings.trial_period_days)
+    else:
+        subscription_status = "none"
+        trial_started_at = None
+        trial_ends_at = None
+
     user = User(
         email=payload.email,
         name=payload.name,
         hashed_password=hash_password(payload.password),
+        subscription_status=subscription_status,
+        trial_started_at=trial_started_at,
+        trial_ends_at=trial_ends_at,
     )
     session.add(user)
+    await session.flush()
+
+    if subscription_status == "trialing":
+        session.add(
+            TrialIdentity(
+                identity_hash=identity_hash,
+                email_hash=email_hash,
+                user_id=user.id,
+            )
+        )
+
     await session.commit()
     await session.refresh(user)
     return user

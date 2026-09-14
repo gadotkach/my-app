@@ -9,8 +9,14 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
     jwt_refresh_expire_days: int = 30
     encryption_key: str = "CHANGE_ME"
-    cookie_secure: bool = False  # True в продакшене (HTTPS)
-    cookie_domain: str | None = None  # None для localhost
+    cookie_secure: bool = False
+    cookie_domain: str | None = None
+
+    trial_period_days: int = 30
+    subscription_period_days: int = 30
+    subscription_price_rub: int = 990
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

@@ -15,6 +15,9 @@ class UserRead(BaseModel):
     email: EmailStr
     name: str
     created_at: datetime
+    subscription_status: str
+    trial_ends_at: datetime | None
+    subscription_ends_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
 

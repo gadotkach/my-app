@@ -1,7 +1,16 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -15,6 +24,16 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(100))
     hashed_password: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Подписка / пробный период
+    subscription_status: Mapped[str] = mapped_column(String(20), default="none", index=True)
+    trial_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Marketplace(Base):
@@ -108,3 +127,34 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship()
+
+
+class TrialIdentity(Base):
+    """Защита от повторного получения trial. Одна запись = один trial."""
+
+    __tablename__ = "trial_identities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email_hash: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Payment(Base):
+    """История платежей. Заполняется из webhook провайдера (ЮKassa и т.п.)."""
+
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(50))  # yookassa, cloudpayments, ...
+    external_id: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="RUB")
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending"
+    )  # pending, succeeded, canceled
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
