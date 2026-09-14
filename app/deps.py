@@ -39,3 +39,18 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+async def require_active_subscription(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency: пропускает только пользователей с активной подпиской или trial.
+
+    Возвращает 402 Payment Required, если подписка истекла или отсутствует.
+    """
+    if current_user.subscription_status in ("none", "expired"):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Subscription required. Please subscribe to access this feature.",
+        )
+    return current_user

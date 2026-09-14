@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_current_user, get_session
+from app.deps import get_session, require_active_subscription
 from app.models import Product, User
 from app.schemas import ProductCreate, ProductRead
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/products", tags=["products"])
 @router.post("", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
 async def create_product(
     payload: ProductCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> Product:
     product = Product(user_id=current_user.id, **payload.model_dump())
@@ -24,7 +24,7 @@ async def create_product(
 
 @router.get("", response_model=list[ProductRead])
 async def list_products(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> list[Product]:
     result = await session.scalars(
@@ -36,7 +36,7 @@ async def list_products(
 @router.get("/{product_id}", response_model=ProductRead)
 async def get_product(
     product_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> Product:
     product = await session.get(Product, product_id)

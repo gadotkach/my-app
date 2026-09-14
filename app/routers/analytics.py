@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_current_user, get_session
+from app.deps import get_session, require_active_subscription
 from app.models import Marketplace, Product, Sale, User
 from app.schemas import AnalyticsSummary, MarketplaceStats, ProductStats
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 async def summary(
     from_date: datetime = Query(..., alias="from"),
     to_date: datetime = Query(..., alias="to"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> AnalyticsSummary:
     stmt = select(
@@ -50,7 +50,7 @@ async def summary(
 async def by_marketplace(
     from_date: datetime = Query(..., alias="from"),
     to_date: datetime = Query(..., alias="to"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> list[MarketplaceStats]:
     stmt = (
@@ -95,7 +95,7 @@ async def by_marketplace(
 async def by_product(
     from_date: datetime = Query(..., alias="from"),
     to_date: datetime = Query(..., alias="to"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> list[ProductStats]:
     stmt = (

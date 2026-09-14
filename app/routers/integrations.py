@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crypto import decrypt, encrypt
-from app.deps import get_current_user, get_session
+from app.deps import get_session, require_active_subscription
 from app.models import Marketplace, MarketplaceAccount, Product, Sale, User
 from app.ozon_client import OzonClient, OzonClientError
 from app.schemas import (
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 )
 async def connect_ozon(
     payload: MarketplaceAccountConnect,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> MarketplaceAccountRead:
     if payload.marketplace_code != "ozon":
@@ -87,7 +87,7 @@ async def connect_ozon(
 
 @router.get("/accounts", response_model=list[MarketplaceAccountRead])
 async def list_accounts(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> list[MarketplaceAccountRead]:
     stmt = (
@@ -109,7 +109,7 @@ async def list_accounts(
 
 @router.post("/ozon/sync/products", response_model=OzonSyncResult)
 async def sync_ozon_products(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> OzonSyncResult:
     account = await session.scalar(
@@ -174,7 +174,7 @@ async def sync_ozon_products(
 async def sync_ozon_sales(
     from_date: datetime = Query(..., alias="from"),
     to_date: datetime = Query(..., alias="to"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> OzonSyncSalesResult:
     account = await session.scalar(
