@@ -1,3 +1,7 @@
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -13,8 +17,19 @@ from app.routers import (
     sales,
     users,
 )
+from app.scheduler import start_scheduler, stop_scheduler
 
-app = FastAPI(title="My App")
+logging.basicConfig(level=logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(title="My App", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -13,6 +13,7 @@ dependencies = [
     "bcrypt==4.0.1",
     "python-jose==3.3.0",
     "cryptography==43.0.3",
+    "apscheduler==3.10.4",
 ]
 
 [tool.fastapi]
@@ -57,5 +58,5 @@ warn_unreachable = true
 exclude = ["alembic/", "tests/"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "httpx.*", "cryptography.*"]
+module = ["asyncpg.*", "httpx.*", "cryptography.*", "apscheduler.*"]
 ignore_missing_imports = true
