@@ -20,6 +20,8 @@ from app.routers import (
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.info("APP BUILD 9271999 — require_active_subscription enabled")
 
 
 @asynccontextmanager
