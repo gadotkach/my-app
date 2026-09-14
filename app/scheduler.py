@@ -1,4 +1,3 @@
-
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -140,14 +139,14 @@ async def sync_all_accounts() -> None:
     logger.info("Starting scheduled Ozon sync")
     async with AsyncSessionLocal() as session:
         stmt = (
-            select(MarketplaceAccount, Marketplace.code)
+            select(MarketplaceAccount)
             .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
             .where(Marketplace.code == "ozon")
         )
         rows = (await session.execute(stmt)).all()
 
     total = {"products_created": 0, "products_updated": 0, "sales_created": 0, "sales_updated": 0}
-    for account, code in rows:
+    for (account,) in rows:
         try:
             api_key = decrypt(account.api_key_encrypted)
             stats = await sync_ozon_for_account(
