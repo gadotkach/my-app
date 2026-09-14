@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -16,7 +18,7 @@ router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 @router.post("/create")
 async def create_subscription(
     current_user: User = Depends(get_current_user),
-) -> dict:
+) -> dict[str, Any]:
     """Создаёт платёж в ЮKassa для оформления подписки."""
     if not settings.yookassa_shop_id or not settings.yookassa_secret_key:
         raise HTTPException(
@@ -24,7 +26,7 @@ async def create_subscription(
             detail="Payment provider is not configured",
         )
 
-    amount = settings.subscription_price_rub
+    amount = Decimal(settings.subscription_price_rub)
 
     try:
         result = await run_in_threadpool(
@@ -43,7 +45,7 @@ async def create_subscription(
     return {
         "payment_id": result["payment_id"],
         "confirmation_url": result["confirmation_url"],
-        "amount": amount,
+        "amount": settings.subscription_price_rub,
         "currency": "RUB",
     }
 
@@ -52,7 +54,7 @@ async def create_subscription(
 async def yookassa_webhook(
     request: Request,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     """Обрабатывает уведомления от ЮKassa.
 
     ЮKassa присылает событие payment.succeeded, когда платёж успешен.
@@ -84,9 +86,7 @@ async def yookassa_webhook(
     user.subscription_status = "active"
     user.subscription_ends_at = now + timedelta(days=period_days)
 
-    existing = await session.scalar(
-        select(Payment).where(Payment.external_id == payment_id)
-    )
+    existing = await session.scalar(select(Payment).where(Payment.external_id == payment_id))
     if existing is None:
         session.add(
             Payment(

@@ -58,5 +58,5 @@ warn_unreachable = true
 exclude = ["alembic/", "tests/"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "httpx.*", "cryptography.*", "apscheduler.*"]
+module = ["asyncpg.*", "httpx.*", "cryptography.*", "apscheduler.*", "yookassa.*"]
 ignore_missing_imports = true
