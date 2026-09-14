@@ -15,6 +15,7 @@ from app.routers import (
     marketplaces,
     products,
     sales,
+    subscriptions,
     users,
 )
 from app.scheduler import start_scheduler, stop_scheduler
@@ -50,6 +51,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(subscriptions.router)
 app.include_router(marketplaces.router)
 app.include_router(delivery_services.router)
 app.include_router(products.router)

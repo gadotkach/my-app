@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     subscription_price_rub: int = 990
     yookassa_shop_id: str = ""
     yookassa_secret_key: str = ""
+    yookassa_return_url: str = "https://my-app-frontend-biz.pages.dev/pricing"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
