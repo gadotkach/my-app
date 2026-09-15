@@ -1,7 +1,5 @@
 """Тесты эндпоинтов /tax-settings."""
 
-from decimal import Decimal
-
 
 async def _register_and_login(client, email: str = "tax@example.com") -> str:
     await client.post(
