@@ -71,6 +71,13 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # --- Юнит-экономика ---
+    cost_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    volume_liters: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    length_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    width_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    height_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+
     sales: Mapped[list["Sale"]] = relationship(back_populates="product")
 
 
