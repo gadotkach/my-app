@@ -145,17 +145,29 @@ async def test_profit_multiple_marketplaces(client):
 
     # Ozon: 2 продажи по 2000
     await _create_sale(
-        client, token, product_id=product_id, marketplace_code="ozon",
-        external_id="O-1", price="2000.00",
+        client,
+        token,
+        product_id=product_id,
+        marketplace_code="ozon",
+        external_id="O-1",
+        price="2000.00",
     )
     await _create_sale(
-        client, token, product_id=product_id, marketplace_code="ozon",
-        external_id="O-2", price="2000.00",
+        client,
+        token,
+        product_id=product_id,
+        marketplace_code="ozon",
+        external_id="O-2",
+        price="2000.00",
     )
     # WB: 1 продажа 1000
     await _create_sale(
-        client, token, product_id=product_id, marketplace_code="wildberries",
-        external_id="W-1", price="1000.00",
+        client,
+        token,
+        product_id=product_id,
+        marketplace_code="wildberries",
+        external_id="W-1",
+        price="1000.00",
     )
 
     response = await client.get(
@@ -242,13 +254,19 @@ async def test_profit_filters_by_date(client):
 
     # Сентябрь
     await _create_sale(
-        client, token, product_id=product_id,
-        external_id="SEP", sold_at="2026-09-15T10:00:00Z",
+        client,
+        token,
+        product_id=product_id,
+        external_id="SEP",
+        sold_at="2026-09-15T10:00:00Z",
     )
     # Октябрь
     await _create_sale(
-        client, token, product_id=product_id,
-        external_id="OCT", sold_at="2026-10-15T10:00:00Z",
+        client,
+        token,
+        product_id=product_id,
+        external_id="OCT",
+        sold_at="2026-10-15T10:00:00Z",
     )
 
     # Только сентябрь
