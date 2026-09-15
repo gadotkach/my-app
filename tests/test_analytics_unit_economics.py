@@ -1,7 +1,5 @@
 """Тесты эндпоинта /analytics/unit-economics."""
 
-from datetime import datetime
-
 
 async def _register_and_login(client, email: str = "ue@example.com") -> str:
     await client.post(
@@ -283,12 +281,18 @@ async def test_unit_economics_filters_by_date(client):
     product_id = await _create_product(client, token, cost_price="500.00")
     # Продажа в сентябре
     await _create_sale(
-        client, token, product_id=product_id, external_id="SEP",
+        client,
+        token,
+        product_id=product_id,
+        external_id="SEP",
         sold_at="2026-09-15T10:00:00Z",
     )
     # Продажа в октябре
     await _create_sale(
-        client, token, product_id=product_id, external_id="OCT",
+        client,
+        token,
+        product_id=product_id,
+        external_id="OCT",
         sold_at="2026-10-15T10:00:00Z",
     )
 
