@@ -16,6 +16,7 @@ from app.routers import (
     products,
     sales,
     # subscriptions,  # временно отключено: FastAPI Cloud не устанавливает yookassa
+    tax_settings,
     users,
 )
 from app.scheduler import start_scheduler, stop_scheduler
@@ -58,6 +59,7 @@ app.include_router(products.router)
 app.include_router(sales.router)
 app.include_router(analytics.router)
 app.include_router(integrations.router)
+app.include_router(tax_settings.router)
 
 
 @app.get("/health")
