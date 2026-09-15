@@ -34,6 +34,9 @@ class User(Base):
     subscription_ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    tax_settings: Mapped["TaxSettings | None"] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class Marketplace(Base):
@@ -104,9 +107,7 @@ class Sale(Base):
     commission_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
 
     logistics_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
-    return_logistics_cost: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), default=Decimal("0")
-    )
+    return_logistics_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
 
     acquiring_fee: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     acquiring_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
@@ -124,6 +125,7 @@ class Sale(Base):
     marketplace: Mapped[Marketplace] = relationship(back_populates="sales")
     product: Mapped[Product | None] = relationship(back_populates="sales")
     delivery_service: Mapped[DeliveryService | None] = relationship(back_populates="sales")
+
 
 class MarketplaceAccount(Base):
     __tablename__ = "marketplace_accounts"
@@ -184,3 +186,32 @@ class Payment(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TaxSettings(Base):
+    __tablename__ = "tax_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+
+    # Система налогообложения: 'NPD', 'USN_INCOME', 'USN_INCOME_EXPENSE', 'PSN'
+    tax_system: Mapped[str] = mapped_column(String(30))
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+
+    # Фиксированные страховые взносы ИП (в 2026 = 57 390 ₽)
+    insurance_contributions: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("57390")
+    )
+
+    # НДС
+    vat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="tax_settings")
