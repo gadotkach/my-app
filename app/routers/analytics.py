@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import get_session, require_active_subscription
 from app.models import Marketplace, Product, Sale, TaxSettings, User
 from app.schemas import (
+    ABCAnalysisResponse,
+    ABCGroupStats,
+    ABCProductItem,
     AnalyticsSummary,
     MarketplaceStats,
     ProductStats,
@@ -390,4 +393,143 @@ async def profit(
         total_net_profit=grand_profit,
         margin_percent=total_margin,
         by_marketplace=by_marketplace,
+    )
+
+
+@router.get("/abc", response_model=ABCAnalysisResponse)
+async def abc_analysis(
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> ABCAnalysisResponse:
+    """ABC-анализ ассортимента по вкладу в прибыль."""
+    # 1. Все продажи за период
+    sales_stmt = select(Sale).where(
+        Sale.user_id == current_user.id,
+        Sale.sold_at >= from_date,
+        Sale.sold_at <= to_date,
+        Sale.product_id.isnot(None),
+    )
+    sales = list((await session.execute(sales_stmt)).scalars().all())
+
+    if not sales:
+        return ABCAnalysisResponse(
+            period_from=from_date,
+            period_to=to_date,
+            groups=[],
+            products=[],
+        )
+
+    # 2. Товары — одним запросом
+    product_ids = {sale.product_id for sale in sales if sale.product_id is not None}
+    products_stmt = select(Product).where(Product.id.in_(product_ids))
+    products = (await session.execute(products_stmt)).scalars().all()
+    products_map = {p.id: p for p in products}
+
+    # 3. Налоговые настройки
+    tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
+    tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+
+    # 4. Группируем по product_id
+    product_stats: dict[int, dict[str, Decimal | int]] = defaultdict(
+        lambda: {"revenue": Decimal("0"), "net_profit": Decimal("0"), "sales_count": 0}
+    )
+
+    for sale in sales:
+        product = products_map.get(sale.product_id or 0)
+        if product is None:
+            continue
+        r = calculate_unit_economics(sale, product, tax_settings)
+        pid = product.id
+        product_stats[pid]["revenue"] += r.net_price * r.quantity
+        product_stats[pid]["net_profit"] += r.net_profit
+        product_stats[pid]["sales_count"] += 1
+
+    # 5. Список товаров, отсортированный по прибыли (убывание)
+    items: list[ABCProductItem] = []
+    for pid, stats in product_stats.items():
+        product = products_map[pid]
+        items.append(
+            ABCProductItem(
+                product_id=pid,
+                product_name=product.name,
+                sku=product.sku,
+                revenue=stats["revenue"],
+                net_profit=stats["net_profit"],
+                group="C",  # временно, назначим ниже
+            )
+        )
+    items.sort(key=lambda x: x.net_profit, reverse=True)
+
+    # 6. Считаем суммарную прибыль по положительным товарам
+    total_positive_profit = sum(
+        (item.net_profit for item in items if item.net_profit > 0), Decimal("0")
+    )
+
+    # 7. Разбиваем на группы
+    if total_positive_profit > 0:
+        cumulative_before = Decimal("0")
+        threshold_a = total_positive_profit * Decimal("0.80")
+        threshold_b = total_positive_profit * Decimal("0.95")
+
+        for item in items:
+            if item.net_profit <= 0:
+                item.group = "C"
+                continue
+
+            # Группа определяется накопленной ДО добавления
+            if cumulative_before < threshold_a:
+                item.group = "A"
+            elif cumulative_before < threshold_b:
+                item.group = "B"
+            else:
+                item.group = "C"
+
+            cumulative_before += item.net_profit
+    else:
+        # Все убыточные — все в C
+        for item in items:
+            item.group = "C"
+
+    # 8. Статистика по группам
+    total_revenue = sum((item.revenue for item in items), Decimal("0"))
+    total_profit = sum((item.net_profit for item in items), Decimal("0"))
+
+    groups: list[ABCGroupStats] = []
+    for group_code in ("A", "B", "C"):
+        group_items = [item for item in items if item.group == group_code]
+        if not group_items:
+            continue
+
+        group_revenue = sum((item.revenue for item in group_items), Decimal("0"))
+        group_profit = sum((item.net_profit for item in group_items), Decimal("0"))
+
+        revenue_share = (
+            (group_revenue / total_revenue * Decimal("100")).quantize(Decimal("0.01"))
+            if total_revenue > 0
+            else Decimal("0")
+        )
+        profit_share = (
+            (group_profit / total_profit * Decimal("100")).quantize(Decimal("0.01"))
+            if total_profit != 0
+            else Decimal("0")
+        )
+
+        groups.append(
+            ABCGroupStats(
+                group=group_code,
+                products_count=len(group_items),
+                revenue=group_revenue,
+                net_profit=group_profit,
+                revenue_share_percent=revenue_share,
+                profit_share_percent=profit_share,
+            )
+        )
+
+    return ABCAnalysisResponse(
+        period_from=from_date,
+        period_to=to_date,
+        groups=groups,
+        products=items,
     )
