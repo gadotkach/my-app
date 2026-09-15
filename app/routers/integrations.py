@@ -104,15 +104,7 @@ async def connect_wb(
     current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> MarketplaceAccountRead:
-    if payload.marketplace_code != "wb":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This endpoint supports only marketplace_code='wb'",
-        )
-
-    marketplace = await session.scalar(
-        select(Marketplace).where(Marketplace.code == payload.marketplace_code)
-    )
+    marketplace = await session.scalar(select(Marketplace).where(Marketplace.code == "wildberries"))
     if marketplace is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -376,7 +368,7 @@ async def sync_wb_products(
         .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
         .where(
             MarketplaceAccount.user_id == current_user.id,
-            Marketplace.code == "wb",
+            Marketplace.code == "wildberries",
         )
     )
     if account is None:
@@ -457,7 +449,7 @@ async def sync_wb_sales(
         .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
         .where(
             MarketplaceAccount.user_id == current_user.id,
-            Marketplace.code == "wb",
+            Marketplace.code == "wildberries",
         )
     )
     if account is None:
@@ -466,7 +458,7 @@ async def sync_wb_sales(
             detail="WB is not connected for this user",
         )
 
-    marketplace = await session.scalar(select(Marketplace).where(Marketplace.code == "wb"))
+    marketplace = await session.scalar(select(Marketplace).where(Marketplace.code == "wildberries"))
     if marketplace is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
