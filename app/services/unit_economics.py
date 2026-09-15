@@ -190,3 +190,140 @@ def calculate_unit_economics(
         roi_percent=roi_percent,
         profit_per_unit=profit_per_unit,
     )
+
+
+# ============================================================
+# Калькулятор до закупки (не привязан к модели Sale)
+# ============================================================
+
+
+def calculate_economics_from_params(
+    *,
+    target_price: Decimal,
+    cost_price: Decimal,
+    quantity: int = 1,
+    commission_percent: Decimal = ZERO,
+    logistics_cost: Decimal = ZERO,
+    acquiring_percent: Decimal = ZERO,
+    storage_cost: Decimal = ZERO,
+    spp_percent: Decimal = ZERO,
+    tax_system: str | None = None,
+    tax_rate: Decimal = ZERO,
+    insurance_contributions: Decimal = ZERO,
+    vat_enabled: bool = False,
+    vat_rate: Decimal = ZERO,
+) -> UnitEconomics:
+    """
+    Расчёт юнит-экономики по «сырым» параметрам — без модели Sale.
+
+    Используется калькулятором до закупки: селлер вводит себестоимость,
+    планируемую цену и расходы площадки, чтобы понять, будет ли товар прибыльным.
+
+    Все проценты — в процентах (22.00, 1.50, 5.00), не в долях.
+    """
+    qty = Decimal(quantity)
+
+    # --- СПП ---
+    spp_amount = _round(target_price * spp_percent / HUNDRED)
+    net_price = target_price - spp_amount
+
+    # --- Расходы площадки ---
+    commission = _round(net_price * commission_percent / HUNDRED)
+    acquiring = _round(net_price * acquiring_percent / HUNDRED)
+    logistics = logistics_cost
+    storage = storage_cost
+    # return_logistics в калькуляторе не задаётся — 0
+    return_logistics = ZERO
+
+    marketplace_costs_total = commission + logistics + return_logistics + acquiring + storage
+
+    # --- Payout ---
+    payout = net_price - marketplace_costs_total
+
+    # --- Себестоимость и валовая прибыль ---
+    cogs = cost_price * qty
+    gross_profit = payout - cogs
+
+    # --- Налог ---
+    revenue = net_price * qty
+    expenses = marketplace_costs_total + cogs
+
+    if tax_system:
+        tax_amount = calculate_tax(
+            tax_system=tax_system,
+            tax_rate=tax_rate,
+            revenue=revenue,
+            expenses=expenses,
+            insurance_contributions=insurance_contributions,
+            vat_enabled=vat_enabled,
+            vat_rate=vat_rate,
+        )
+    else:
+        tax_amount = ZERO
+
+    # --- Итог ---
+    net_profit = gross_profit - tax_amount
+
+    # --- Метрики ---
+    margin_percent = _round(net_profit / revenue * HUNDRED) if revenue > ZERO else ZERO
+    roi_percent = _round(net_profit / cogs * HUNDRED) if cogs > ZERO else ZERO
+    profit_per_unit = _round(net_profit / qty) if qty > ZERO else ZERO
+
+    return UnitEconomics(
+        gross_price=_round(target_price),
+        quantity=quantity,
+        spp_amount=spp_amount,
+        net_price=_round(net_price),
+        commission=commission,
+        logistics=_round(logistics),
+        return_logistics=return_logistics,
+        acquiring=acquiring,
+        storage=_round(storage),
+        marketplace_costs_total=_round(marketplace_costs_total),
+        payout=_round(payout),
+        cogs=_round(cogs),
+        gross_profit=_round(gross_profit),
+        tax_amount=tax_amount,
+        net_profit=_round(net_profit),
+        margin_percent=margin_percent,
+        roi_percent=roi_percent,
+        profit_per_unit=profit_per_unit,
+    )
+
+
+def calculate_recommended_price(
+    *,
+    cost_price: Decimal,
+    commission_percent: Decimal,
+    acquiring_percent: Decimal,
+    spp_percent: Decimal,
+    logistics_cost: Decimal,
+    storage_cost: Decimal,
+    target_margin_percent: Decimal = Decimal("10"),
+    tax_rate_percent: Decimal = ZERO,
+) -> Decimal | None:
+    """
+    Минимальная цена, при которой маржа ≥ target_margin_percent.
+
+    Возвращает None, если при таких параметрах прибыль недостижима
+    (например, суммарные проценты ≥ 100%).
+    """
+    # Доли
+    commission_share = commission_percent / HUNDRED
+    acquiring_share = acquiring_percent / HUNDRED
+    spp_share = spp_percent / HUNDRED
+    tax_share = tax_rate_percent / HUNDRED
+    target_margin = target_margin_percent / HUNDRED
+
+    # Сколько остаётся от цены после всех процентов
+    leftover_share = Decimal("1") - commission_share - acquiring_share - spp_share - tax_share
+
+    if leftover_share <= Decimal("0.01"):
+        # Слишком много процентов — цена не спасёт
+        return None
+
+    # Фиксированные расходы + желаемая прибыль на единицу
+    fixed_costs = logistics_cost + storage_cost + cost_price * (Decimal("1") + target_margin)
+
+    required_price = fixed_costs / leftover_share
+    return _round(required_price)

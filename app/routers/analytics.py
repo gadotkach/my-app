@@ -13,13 +13,19 @@ from app.schemas import (
     ABCGroupStats,
     ABCProductItem,
     AnalyticsSummary,
+    CalculatorRequest,
+    CalculatorResponse,
     MarketplaceStats,
     ProductStats,
     ProfitByMarketplace,
     ProfitSummaryResponse,
     UnitEconomicsResponse,
 )
-from app.services.unit_economics import calculate_unit_economics
+from app.services.unit_economics import (
+    calculate_economics_from_params,
+    calculate_recommended_price,
+    calculate_unit_economics,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -532,4 +538,94 @@ async def abc_analysis(
         period_to=to_date,
         groups=groups,
         products=items,
+    )
+
+
+@router.post("/calculator", response_model=CalculatorResponse)
+async def calculator(
+    payload: CalculatorRequest,
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> CalculatorResponse:
+    """Калькулятор юнит-экономики для нового товара (до закупки)."""
+    # 1. Определяем налоговые параметры
+    tax_system = payload.tax_system
+    tax_rate = payload.tax_rate
+    insurance_contributions = payload.insurance_contributions
+    vat_enabled = payload.vat_enabled
+    vat_rate = payload.vat_rate
+
+    # Если tax_system не задан — берём из TaxSettings пользователя
+    if tax_system is None:
+        tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
+        settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+        if settings is not None:
+            tax_system = settings.tax_system
+            tax_rate = Decimal(settings.tax_rate)
+            insurance_contributions = Decimal(settings.insurance_contributions)
+            vat_enabled = settings.vat_enabled
+            vat_rate = Decimal(settings.vat_rate)
+
+    # 2. Считаем юнит-экономику
+    economics = calculate_economics_from_params(
+        target_price=payload.target_price,
+        cost_price=payload.cost_price,
+        quantity=payload.quantity,
+        commission_percent=payload.commission_percent,
+        logistics_cost=payload.logistics_cost,
+        acquiring_percent=payload.acquiring_percent,
+        storage_cost=payload.storage_cost,
+        spp_percent=payload.spp_percent,
+        tax_system=tax_system,
+        tax_rate=tax_rate or Decimal("0"),
+        insurance_contributions=insurance_contributions or Decimal("0"),
+        vat_enabled=vat_enabled,
+        vat_rate=vat_rate or Decimal("0"),
+    )
+
+    # 3. Warning + рекомендованная цена
+    warning: str | None = None
+    if economics.net_profit < Decimal("0"):
+        # Считаем минимальную цену для маржи 10%
+        effective_tax_rate = tax_rate or Decimal("0")
+        recommended = calculate_recommended_price(
+            cost_price=payload.cost_price,
+            commission_percent=payload.commission_percent,
+            acquiring_percent=payload.acquiring_percent,
+            spp_percent=payload.spp_percent,
+            logistics_cost=payload.logistics_cost,
+            storage_cost=payload.storage_cost,
+            target_margin_percent=Decimal("10"),
+            tax_rate_percent=effective_tax_rate,
+        )
+        if recommended is not None:
+            warning = (
+                f"Текущая цена не покрывает затраты. "
+                f"Рекомендуемая цена — не ниже {recommended} ₽ "
+                f"(маржа 10%)"
+            )
+        else:
+            warning = (
+                "При таких параметрах прибыль недостижима — "
+                "суммарные проценты комиссий превышают 100%"
+            )
+
+    return CalculatorResponse(
+        gross_price=economics.gross_price,
+        spp_amount=economics.spp_amount,
+        net_price=economics.net_price,
+        commission=economics.commission,
+        logistics=economics.logistics,
+        acquiring=economics.acquiring,
+        storage=economics.storage,
+        marketplace_costs_total=economics.marketplace_costs_total,
+        payout=economics.payout,
+        cogs=economics.cogs,
+        gross_profit=economics.gross_profit,
+        tax_amount=economics.tax_amount,
+        net_profit=economics.net_profit,
+        margin_percent=economics.margin_percent,
+        roi_percent=economics.roi_percent,
+        profit_per_unit=economics.profit_per_unit,
+        warning=warning,
     )
