@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
@@ -11,6 +12,8 @@ from app.schemas import (
     AnalyticsSummary,
     MarketplaceStats,
     ProductStats,
+    ProfitByMarketplace,
+    ProfitSummaryResponse,
     UnitEconomicsResponse,
 )
 from app.services.unit_economics import calculate_unit_economics
@@ -264,4 +267,127 @@ async def unit_economics(
         roi_percent=roi_percent,
         profit_per_unit=profit_per_unit,
         warning=warning,
+    )
+
+
+@router.get("/profit", response_model=ProfitSummaryResponse)
+async def profit(
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> ProfitSummaryResponse:
+    """Сводка прибыли за период с разбивкой по площадкам."""
+    # 1. Все продажи за период
+    sales_stmt = select(Sale).where(
+        Sale.user_id == current_user.id,
+        Sale.sold_at >= from_date,
+        Sale.sold_at <= to_date,
+    )
+    sales = list((await session.execute(sales_stmt)).scalars().all())
+
+    if not sales:
+        return ProfitSummaryResponse(
+            period_from=from_date,
+            period_to=to_date,
+            total_revenue=Decimal("0"),
+            total_marketplace_costs=Decimal("0"),
+            total_cogs=Decimal("0"),
+            total_tax=Decimal("0"),
+            total_net_profit=Decimal("0"),
+            margin_percent=Decimal("0"),
+            by_marketplace=[],
+        )
+
+    # 2. Товары для всех продаж — одним запросом (избегаем N+1)
+    product_ids = {sale.product_id for sale in sales if sale.product_id is not None}
+    products_map: dict[int, Product] = {}
+    if product_ids:
+        products_stmt = select(Product).where(Product.id.in_(product_ids))
+        products = (await session.execute(products_stmt)).scalars().all()
+        products_map = {p.id: p for p in products}
+
+    # 3. Налоговые настройки
+    tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
+    tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+
+    # 4. Группируем продажи по marketplace_id
+    groups: dict[int, list[Sale]] = defaultdict(list)
+    for sale in sales:
+        groups[sale.marketplace_id].append(sale)
+
+    # 5. Названия площадок — одним запросом
+    marketplace_ids = list(groups.keys())
+    mp_stmt = select(Marketplace).where(Marketplace.id.in_(marketplace_ids))
+    marketplaces = (await session.execute(mp_stmt)).scalars().all()
+    marketplace_map = {m.id: m for m in marketplaces}
+
+    # 6. Считаем по каждой группе
+    by_marketplace: list[ProfitByMarketplace] = []
+    grand_revenue = Decimal("0")
+    grand_costs = Decimal("0")
+    grand_cogs = Decimal("0")
+    grand_tax = Decimal("0")
+    grand_profit = Decimal("0")
+
+    for marketplace_id, marketplace_sales in groups.items():
+        mp = marketplace_map[marketplace_id]
+
+        # Считаем юнит-экономику для каждой продажи площадки
+        results = [
+            calculate_unit_economics(sale, products_map.get(sale.product_id or 0), tax_settings)
+            for sale in marketplace_sales
+        ]
+
+        revenue = sum((r.net_price * r.quantity for r in results), Decimal("0"))
+        costs = sum((r.marketplace_costs_total * r.quantity for r in results), Decimal("0"))
+        cogs = sum((r.cogs for r in results), Decimal("0"))
+        tax = sum((r.tax_amount for r in results), Decimal("0"))
+        net_profit = sum((r.net_profit for r in results), Decimal("0"))
+
+        margin = (
+            (net_profit / revenue * Decimal("100")).quantize(Decimal("0.01"))
+            if revenue > 0
+            else Decimal("0")
+        )
+
+        by_marketplace.append(
+            ProfitByMarketplace(
+                marketplace_code=mp.code,
+                marketplace_name=mp.name,
+                sales_count=len(marketplace_sales),
+                revenue=revenue,
+                marketplace_costs=costs,
+                cogs=cogs,
+                tax_amount=tax,
+                net_profit=net_profit,
+                margin_percent=margin,
+            )
+        )
+
+        grand_revenue += revenue
+        grand_costs += costs
+        grand_cogs += cogs
+        grand_tax += tax
+        grand_profit += net_profit
+
+    # Сортируем по прибыли (по убыванию)
+    by_marketplace.sort(key=lambda x: x.net_profit, reverse=True)
+
+    total_margin = (
+        (grand_profit / grand_revenue * Decimal("100")).quantize(Decimal("0.01"))
+        if grand_revenue > 0
+        else Decimal("0")
+    )
+
+    return ProfitSummaryResponse(
+        period_from=from_date,
+        period_to=to_date,
+        total_revenue=grand_revenue,
+        total_marketplace_costs=grand_costs,
+        total_cogs=grand_cogs,
+        total_tax=grand_tax,
+        total_net_profit=grand_profit,
+        margin_percent=total_margin,
+        by_marketplace=by_marketplace,
     )
