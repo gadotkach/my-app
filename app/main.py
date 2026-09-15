@@ -15,14 +15,14 @@ from app.routers import (
     marketplaces,
     products,
     sales,
-    subscriptions,
+    # subscriptions,  # временно отключено: FastAPI Cloud не устанавливает yookassa
     users,
 )
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.info("APP BUILD yookassa-final-v3 — subscriptions ready")
+logger.info("APP BUILD no-yookassa — subscriptions temporarily disabled")
 logger = logging.getLogger(__name__)
 logger.info("APP BUILD 9271999 — require_active_subscription enabled")
 
@@ -51,7 +51,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
-app.include_router(subscriptions.router)
+# app.include_router(subscriptions.router)  # временно отключено: см. выше
 app.include_router(marketplaces.router)
 app.include_router(delivery_services.router)
 app.include_router(products.router)
