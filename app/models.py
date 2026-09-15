@@ -96,15 +96,34 @@ class Sale(Base):
     external_id: Mapped[str] = mapped_column(String(100), index=True)
     quantity: Mapped[int] = mapped_column(default=1)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    commission: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
-    logistics_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     sold_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # --- Юнит-экономика: расходы площадки ---
+    commission: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    commission_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+    logistics_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    return_logistics_cost: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0")
+    )
+
+    acquiring_fee: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    acquiring_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+    storage_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+
+    # --- СПП ---
+    spp_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    spp_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    retail_price_with_spp: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    # --- Итоговая выплата от площадки ---
+    payout_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
 
     marketplace: Mapped[Marketplace] = relationship(back_populates="sales")
     product: Mapped[Product | None] = relationship(back_populates="sales")
     delivery_service: Mapped[DeliveryService | None] = relationship(back_populates="sales")
-
 
 class MarketplaceAccount(Base):
     __tablename__ = "marketplace_accounts"
