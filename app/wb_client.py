@@ -53,18 +53,14 @@ class WBClient:
         if response.status_code == 401:
             raise WBClientError("WB: неверный токен (401 Unauthorized)")
         if response.status_code == 403:
-            raise WBClientError(
-                "WB: доступ запрещён — проверьте права токена (403 Forbidden)"
-            )
+            raise WBClientError("WB: доступ запрещён — проверьте права токена (403 Forbidden)")
         if response.status_code == 429:
             raise WBClientError(
                 "WB: превышен лимит запросов (429 Too Many Requests). "
                 "Для Базового токена лимит очень жёсткий"
             )
         if response.status_code >= 400:
-            raise WBClientError(
-                f"WB API error {response.status_code}: {response.text[:200]}"
-            )
+            raise WBClientError(f"WB API error {response.status_code}: {response.text[:200]}")
         if not response.content:
             return {}
         return response.json()
@@ -106,9 +102,7 @@ class WBClient:
                     "filter": {"withPhoto": -1},
                 }
             }
-            data = await self._post(
-                self.CONTENT_URL, "/content/v2/get/cards/list", payload
-            )
+            data = await self._post(self.CONTENT_URL, "/content/v2/get/cards/list", payload)
             cards = data.get("cards", []) or []
             result.extend(cards)
 
