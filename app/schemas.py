@@ -39,6 +39,11 @@ class ProductCreate(BaseModel):
     sku: str
     name: str
     description: str | None = None
+    cost_price: Decimal | None = None
+    volume_liters: Decimal | None = None
+    length_cm: Decimal | None = None
+    width_cm: Decimal | None = None
+    height_cm: Decimal | None = None
 
 
 class ProductRead(BaseModel):
@@ -46,6 +51,11 @@ class ProductRead(BaseModel):
     sku: str
     name: str
     description: str | None
+    cost_price: Decimal | None
+    volume_liters: Decimal | None
+    length_cm: Decimal | None
+    width_cm: Decimal | None
+    height_cm: Decimal | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
