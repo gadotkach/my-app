@@ -126,6 +126,12 @@ async def sync_ozon_products(
             detail="Ozon is not connected for this user",
         )
 
+    if account.client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ozon account is missing client_id",
+        )
+
     api_key = decrypt(account.api_key_encrypted)
     try:
         async with OzonClient(account.client_id, api_key) as ozon:
@@ -189,6 +195,12 @@ async def sync_ozon_sales(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Ozon is not connected for this user",
+        )
+
+    if account.client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ozon account is missing client_id",
         )
 
     api_key = decrypt(account.api_key_encrypted)

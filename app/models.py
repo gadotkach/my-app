@@ -133,7 +133,7 @@ class MarketplaceAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     marketplace_id: Mapped[int] = mapped_column(ForeignKey("marketplaces.id"), index=True)
-    client_id: Mapped[str] = mapped_column(String(100))
+    client_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     api_key_encrypted: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
