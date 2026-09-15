@@ -14,8 +14,10 @@ from app.schemas import (
     MarketplaceAccountRead,
     OzonSyncResult,
     OzonSyncSalesResult,
+    WBSyncResult,
+    WBSyncSalesResult,
 )
-from app.wb_client import WBClient
+from app.wb_client import WBClient, WBClientError
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -357,6 +359,242 @@ async def sync_ozon_sales(
     await session.commit()
     return OzonSyncSalesResult(
         synced=len(postings),
+        created=created,
+        updated=updated,
+        period_from=from_date,
+        period_to=to_date,
+    )
+
+
+@router.post("/wb/sync/products", response_model=WBSyncResult)
+async def sync_wb_products(
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> WBSyncResult:
+    account = await session.scalar(
+        select(MarketplaceAccount)
+        .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
+        .where(
+            MarketplaceAccount.user_id == current_user.id,
+            Marketplace.code == "wb",
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="WB is not connected for this user",
+        )
+
+    api_key = decrypt(account.api_key_encrypted)
+    wb = WBClient(api_key)
+    try:
+        cards = await wb.list_products()
+    except WBClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    created = 0
+    updated = 0
+    for card in cards:
+        nm_id = card.get("nmID")
+        if nm_id is None:
+            continue
+        sku = str(nm_id)
+        name = card.get("title") or card.get("subjectName") or f"WB-{nm_id}"
+        description = card.get("description") or None
+
+        # Габариты (WB отдаёт в см)
+        dimensions = card.get("dimensions") or {}
+        length = dimensions.get("length")
+        width = dimensions.get("width")
+        height = dimensions.get("height")
+
+        existing = await session.scalar(
+            select(Product).where(
+                Product.user_id == current_user.id,
+                Product.sku == sku,
+            )
+        )
+        if existing is None:
+            session.add(
+                Product(
+                    user_id=current_user.id,
+                    sku=sku,
+                    name=name,
+                    description=description,
+                    length_cm=Decimal(str(length)) if length is not None else None,
+                    width_cm=Decimal(str(width)) if width is not None else None,
+                    height_cm=Decimal(str(height)) if height is not None else None,
+                )
+            )
+            created += 1
+        else:
+            existing.name = name
+            existing.description = description
+            if length is not None:
+                existing.length_cm = Decimal(str(length))
+            if width is not None:
+                existing.width_cm = Decimal(str(width))
+            if height is not None:
+                existing.height_cm = Decimal(str(height))
+            updated += 1
+
+    await session.commit()
+    return WBSyncResult(synced=len(cards), created=created, updated=updated)
+
+
+@router.post("/wb/sync/sales", response_model=WBSyncSalesResult)
+async def sync_wb_sales(
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> WBSyncSalesResult:
+    account = await session.scalar(
+        select(MarketplaceAccount)
+        .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
+        .where(
+            MarketplaceAccount.user_id == current_user.id,
+            Marketplace.code == "wb",
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="WB is not connected for this user",
+        )
+
+    marketplace = await session.scalar(select(Marketplace).where(Marketplace.code == "wb"))
+    if marketplace is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Marketplace 'wb' not found",
+        )
+
+    api_key = decrypt(account.api_key_encrypted)
+    wb = WBClient(api_key)
+    try:
+        rows = await wb.list_sales_report(date_from=from_date, date_to=to_date)
+    except WBClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    # Собираем все nm_id из отчёта → один запрос в БД
+    nm_ids: set[str] = set()
+    for row in rows:
+        nm_id = row.get("nm_id")
+        if nm_id is not None:
+            nm_ids.add(str(nm_id))
+
+    products_map: dict[str, Product] = {}
+    if nm_ids:
+        products_stmt = select(Product).where(
+            Product.user_id == current_user.id,
+            Product.sku.in_(nm_ids),
+        )
+        products = (await session.execute(products_stmt)).scalars().all()
+        products_map = {p.sku: p for p in products}
+
+    created = 0
+    updated = 0
+    for row in rows:
+        # external_id — уникальный ID строки отчёта (srid)
+        srid = row.get("srid")
+        if not srid:
+            continue
+        external_id = str(srid)
+
+        # nm_id для привязки к Product
+        nm_id = row.get("nm_id")
+        product = products_map.get(str(nm_id)) if nm_id is not None else None
+
+        # Суммы
+        ppvz_for_pay = Decimal(str(row.get("ppvz_for_pay") or "0"))
+        ppvz_sales_commission = Decimal(str(row.get("ppvz_sales_commission") or "0"))
+        acquiring_fee = Decimal(str(row.get("acquiring_fee") or "0"))
+        delivery_rub = Decimal(str(row.get("delivery_rub") or "0"))
+        storage_fee = Decimal(str(row.get("storage_fee") or "0"))
+        retail_price_with_spp = row.get("retail_price_withdisc_rub")
+        spp_percent = row.get("ppvz_spp_prc")
+
+        # Цена продажи = payout + все удержания (цена, которую увидел покупатель)
+        price = ppvz_for_pay + ppvz_sales_commission + acquiring_fee + delivery_rub
+
+        # Количество
+        quantity = int(row.get("ppvz_vw") or 1)
+
+        # Дата продажи
+        sold_at_raw = row.get("sale_dt") or row.get("order_dt") or row.get("rr_dt")
+        if sold_at_raw:
+            sold_at = datetime.fromisoformat(str(sold_at_raw).replace("Z", "+00:00"))
+            if sold_at.tzinfo is None:
+                sold_at = sold_at.replace(tzinfo=UTC)
+        else:
+            sold_at = datetime.now(UTC)
+
+        existing = await session.scalar(
+            select(Sale).where(
+                Sale.user_id == current_user.id,
+                Sale.marketplace_id == marketplace.id,
+                Sale.external_id == external_id,
+            )
+        )
+
+        spp_amount = (
+            Decimal(str(retail_price_with_spp)) * Decimal(str(spp_percent)) / Decimal("100")
+            if retail_price_with_spp is not None and spp_percent is not None
+            else Decimal("0")
+        )
+
+        if existing is None:
+            session.add(
+                Sale(
+                    user_id=current_user.id,
+                    marketplace_id=marketplace.id,
+                    product_id=product.id if product is not None else None,
+                    delivery_service_id=None,
+                    external_id=external_id,
+                    quantity=quantity,
+                    price=price,
+                    commission=ppvz_sales_commission,
+                    logistics_cost=delivery_rub,
+                    acquiring_fee=acquiring_fee,
+                    storage_cost=storage_fee,
+                    spp_percent=Decimal(str(spp_percent)) if spp_percent is not None else None,
+                    spp_amount=spp_amount,
+                    retail_price_with_spp=(
+                        Decimal(str(retail_price_with_spp))
+                        if retail_price_with_spp is not None
+                        else None
+                    ),
+                    payout_amount=ppvz_for_pay,
+                    sold_at=sold_at,
+                )
+            )
+            created += 1
+        else:
+            existing.quantity = quantity
+            existing.price = price
+            existing.commission = ppvz_sales_commission
+            existing.logistics_cost = delivery_rub
+            existing.acquiring_fee = acquiring_fee
+            existing.storage_cost = storage_fee
+            existing.spp_percent = Decimal(str(spp_percent)) if spp_percent is not None else None
+            existing.spp_amount = spp_amount
+            existing.retail_price_with_spp = (
+                Decimal(str(retail_price_with_spp)) if retail_price_with_spp is not None else None
+            )
+            existing.payout_amount = ppvz_for_pay
+            existing.sold_at = sold_at
+            updated += 1
+
+    await session.commit()
+    return WBSyncSalesResult(
+        synced=len(rows),
         created=created,
         updated=updated,
         period_from=from_date,

@@ -168,6 +168,20 @@ class OzonSyncSalesResult(BaseModel):
     period_to: datetime
 
 
+class WBSyncResult(BaseModel):
+    synced: int
+    created: int
+    updated: int
+
+
+class WBSyncSalesResult(BaseModel):
+    synced: int
+    created: int
+    updated: int
+    period_from: datetime
+    period_to: datetime
+
+
 # ============================================================
 # Юнит-экономика
 # ============================================================
