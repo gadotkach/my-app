@@ -15,6 +15,7 @@ from app.schemas import (
     OzonSyncResult,
     OzonSyncSalesResult,
 )
+from app.wb_client import WBClient
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -33,6 +34,12 @@ async def connect_ozon(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This endpoint supports only marketplace_code='ozon'",
+        )
+
+    if payload.client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="client_id is required for Ozon",
         )
 
     marketplace = await session.scalar(
@@ -71,6 +78,71 @@ async def connect_ozon(
             user_id=current_user.id,
             marketplace_id=marketplace.id,
             client_id=payload.client_id,
+            api_key_encrypted=encrypt(payload.api_key),
+        )
+        session.add(account)
+        await session.commit()
+        await session.refresh(account)
+
+    return MarketplaceAccountRead(
+        id=account.id,
+        marketplace_code=marketplace.code,
+        client_id=account.client_id,
+        created_at=account.created_at,
+    )
+
+
+@router.post(
+    "/wb/connect",
+    response_model=MarketplaceAccountRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def connect_wb(
+    payload: MarketplaceAccountConnect,
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> MarketplaceAccountRead:
+    if payload.marketplace_code != "wb":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This endpoint supports only marketplace_code='wb'",
+        )
+
+    marketplace = await session.scalar(
+        select(Marketplace).where(Marketplace.code == payload.marketplace_code)
+    )
+    if marketplace is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Marketplace 'wb' not found in database",
+        )
+
+    # Проверка токена через WB /ping
+    wb = WBClient(payload.api_key)
+    if not await wb.ping():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="WB: неверный токен (проверьте права и срок действия)",
+        )
+
+    existing = await session.scalar(
+        select(MarketplaceAccount).where(
+            MarketplaceAccount.user_id == current_user.id,
+            MarketplaceAccount.marketplace_id == marketplace.id,
+        )
+    )
+
+    if existing is not None:
+        existing.client_id = None
+        existing.api_key_encrypted = encrypt(payload.api_key)
+        await session.commit()
+        await session.refresh(existing)
+        account = existing
+    else:
+        account = MarketplaceAccount(
+            user_id=current_user.id,
+            marketplace_id=marketplace.id,
+            client_id=None,
             api_key_encrypted=encrypt(payload.api_key),
         )
         session.add(account)

@@ -140,15 +140,15 @@ class ProductStats(BaseModel):
 
 
 class MarketplaceAccountConnect(BaseModel):
-    marketplace_code: str  # например, "ozon"
-    client_id: str
+    marketplace_code: str  # "ozon" | "wb"
+    client_id: str | None = None  # обязателен для Ozon, не нужен для WB
     api_key: str
 
 
 class MarketplaceAccountRead(BaseModel):
     id: int
     marketplace_code: str
-    client_id: str
+    client_id: str | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
