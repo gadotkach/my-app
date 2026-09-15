@@ -15,12 +15,12 @@ class UnitEconomics:
     """Результат расчёта юнит-экономики по одной продаже."""
 
     # Входные данные
-    gross_price: Decimal          # цена, установленная селлером
-    quantity: int                 # количество единиц
+    gross_price: Decimal  # цена, установленная селлером
+    quantity: int  # количество единиц
 
     # СПП
-    spp_amount: Decimal           # сумма скидки постоянного покупателя
-    net_price: Decimal            # цена после СПП (то, что реально платит покупатель)
+    spp_amount: Decimal  # сумма скидки постоянного покупателя
+    net_price: Decimal  # цена после СПП (то, что реально платит покупатель)
 
     # Расходы площадки
     commission: Decimal
@@ -31,18 +31,18 @@ class UnitEconomics:
     marketplace_costs_total: Decimal  # сумма всех расходов площадки
 
     # Payout и себестоимость
-    payout: Decimal               # выплата от площадки
-    cogs: Decimal                 # себестоимость (cost of goods sold)
-    gross_profit: Decimal         # валовая прибыль (payout − cogs)
+    payout: Decimal  # выплата от площадки
+    cogs: Decimal  # себестоимость (cost of goods sold)
+    gross_profit: Decimal  # валовая прибыль (payout − cogs)
 
     # Налоги и итог
     tax_amount: Decimal
-    net_profit: Decimal           # чистая прибыль
+    net_profit: Decimal  # чистая прибыль
 
     # Метрики
-    margin_percent: Decimal       # маржа в % от net_price
-    roi_percent: Decimal          # ROI в % от cogs
-    profit_per_unit: Decimal      # прибыль с одной единицы
+    margin_percent: Decimal  # маржа в % от net_price
+    roi_percent: Decimal  # ROI в % от cogs
+    profit_per_unit: Decimal  # прибыль с одной единицы
 
 
 def _round(value: Decimal) -> Decimal:
@@ -133,9 +133,7 @@ def calculate_unit_economics(
     acquiring = Decimal(sale.acquiring_fee or ZERO)
     storage = Decimal(sale.storage_cost or ZERO)
 
-    marketplace_costs_total = (
-        commission + logistics + return_logistics + acquiring + storage
-    )
+    marketplace_costs_total = commission + logistics + return_logistics + acquiring + storage
 
     # --- Payout (что перечислила площадка) ---
     payout = net_price - marketplace_costs_total
@@ -168,12 +166,8 @@ def calculate_unit_economics(
     net_profit = gross_profit - tax_amount
 
     # --- Метрики ---
-    margin_percent = (
-        _round(net_profit / revenue * HUNDRED) if revenue > ZERO else ZERO
-    )
-    roi_percent = (
-        _round(net_profit / cogs * HUNDRED) if cogs > ZERO else ZERO
-    )
+    margin_percent = _round(net_profit / revenue * HUNDRED) if revenue > ZERO else ZERO
+    roi_percent = _round(net_profit / cogs * HUNDRED) if cogs > ZERO else ZERO
     profit_per_unit = _round(net_profit / quantity) if quantity > ZERO else ZERO
 
     return UnitEconomics(

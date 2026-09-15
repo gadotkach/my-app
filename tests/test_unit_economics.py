@@ -2,8 +2,6 @@
 
 from decimal import Decimal
 
-import pytest
-
 from app.services.unit_economics import calculate_tax, calculate_unit_economics
 
 
