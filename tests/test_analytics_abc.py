@@ -67,9 +67,7 @@ async def _create_sale(
 
 async def test_abc_requires_auth(client):
     """Без токена → 401."""
-    response = await client.get(
-        "/analytics/abc?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z"
-    )
+    response = await client.get("/analytics/abc?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z")
     assert response.status_code == 401
 
 
@@ -153,15 +151,15 @@ async def test_abc_groups_distribution(client):
     # Прибыль = price − 250 − 500 = price − 750.
     prices = [
         "10000.00",  # profit 9250
-        "5000.00",   # profit 4250
-        "3000.00",   # profit 2250
-        "2000.00",   # profit 1250
-        "1500.00",   # profit 750
-        "1300.00",   # profit 550
-        "1200.00",   # profit 450
-        "1100.00",   # profit 350
-        "1000.00",   # profit 250
-        "900.00",    # profit 150
+        "5000.00",  # profit 4250
+        "3000.00",  # profit 2250
+        "2000.00",  # profit 1250
+        "1500.00",  # profit 750
+        "1300.00",  # profit 550
+        "1200.00",  # profit 450
+        "1100.00",  # profit 350
+        "1000.00",  # profit 250
+        "900.00",  # profit 150
     ]
     for i, price in enumerate(prices):
         pid = await _create_product(client, token, sku=f"P-{i}", name=f"Товар {i}")
@@ -203,9 +201,7 @@ async def test_abc_sums_correct(client):
     data = response.json()
 
     # Сумма по группам == сумма по товарам
-    total_revenue_from_groups = sum(
-        (Decimal(g["revenue"]) for g in data["groups"]), Decimal("0")
-    )
+    total_revenue_from_groups = sum((Decimal(g["revenue"]) for g in data["groups"]), Decimal("0"))
     total_revenue_from_products = sum(
         (Decimal(p["revenue"]) for p in data["products"]), Decimal("0")
     )
