@@ -1,0 +1,764 @@
+# 📋 SPEC — SaaS-агрегатор маркетплейсов
+
+**Версия:** 2.0 (обновлено 2026-10-06)
+**Статус:** production-ready, работает из РФ без VPN
+
+---
+
+# ЧАСТЬ 1: ОПИСАНИЕ ПРОДУКТА
+
+## Что это
+
+SaaS-платформа для селлеров маркетплейсов. Селлер заходит в один личный кабинет и видит **consolidated-данные** со всех площадок (Ozon, Wildberries, Я.Маркет, AliExpress): товары, продажи, финансы, аналитику, юнит-экономику.
+
+**Ключевая ценность:** селлер видит **реальную прибыль** по каждому товару с учётом комиссий, СПП, логистики, налогов и себестоимости — то, чего не даёт ни одна площадка в отдельности.
+
+## Целевая аудитория
+
+Селлеры на Ozon и Wildberries, работающие по FBO/FBS, с оборотом от 500 тыс ₽/мес.
+
+## Ключевые отличия от конкурентов
+
+| | Наш сервис | MPProfit | MPStatus |
+|---|---|---|---|
+| **Фокус** | Аналитика + юнит-экономика | Аналитика + реклама + 1С | Комбайн: аналитика + операционка |
+| **Цена** | **990 ₽/мес** | 1500–5000 ₽/мес | 2000–6000 ₽/мес |
+| **Юнит-экономика** | ✅ | ✅ | ✅ |
+| **Калькулятор до закупки** | ✅ | ✅ | ✅ |
+| **Реклама (ДРР)** | 🟡 roadmap | ✅ | ✅ |
+| **Операционка FBS** | 🟢 roadmap | ❌ | ✅ |
+| **PIM** | 🟢 roadmap | ⚠️ | ✅ |
+| **1С-экспорт** | 🟡 roadmap | ✅ | ⚠️ |
+| **Telegram-уведомления** | 🟡 roadmap | ✅ | ✅ |
+
+**Стратегия:** узкий фокус на «реальной прибыли» + агрессивная цена. Не пытаемся догнать MPStatus в операционке.
+
+---
+
+# ЧАСТЬ 2: ТЕКУЩИЙ СТАТУС (production)
+
+## Живые ссылки
+
+| Что | URL |
+|---|---|
+| Frontend | https://agregators.su |
+| Backend API | https://api.agregators.su |
+| Swagger | https://api.agregators.su/docs |
+| Health | https://api.agregators.su/health |
+| GitHub backend | github.com/gadotkach/my-app |
+| GitHub frontend | github.com/gadotkach/my-app-frontend |
+| Neon (БД) | console.neon.tech |
+| Cloudflare (DNS) | dash.cloudflare.com |
+
+## Тестовые пользователи
+
+Пароль: `secret123`
+
+| Email | Подписка | Что делает |
+|---|---|---|
+| `trial-1789389840@example.com` | trialing | Доступ в кабинет, жёлтый бейдж |
+| `alice@example.com` | none | Редирект на `/pricing` |
+
+## Что работает в проде
+
+### Backend
+- ✅ Auth: JWT + refresh, trial 30 дней, защита от повторного получения
+- ✅ Ozon: connect + sync products + sync sales (FBS + FBO), scheduler каждые 30 мин
+- ✅ WB: connect + sync products, scheduler каждые 180 мин
+- ⚠️ WB Sales API — deprecated (WB закрыл `reportDetailByPeriod`)
+- ✅ Юнит-экономика: полный расчёт
+- ✅ Аналитика: 9 эндпоинтов (см. Часть 4)
+- ✅ Tax settings: CRUD
+- ✅ Авто-миграции Alembic при старте контейнера
+- ✅ Шифрование API-ключей Fernet
+- ✅ Авто-sync через `POST /integrations/sync-if-stale` (пороги: Ozon 15 мин, WB products 60 мин, WB sales 180 мин)
+
+### Frontend
+- ✅ Auth flow (login/register/refresh/logout)
+- ✅ Dashboard со сводкой и фильтром 7/30/90 дней
+- ✅ `/products` — список товаров
+- ✅ `/sales` — список продаж
+- ✅ `/integrations` — connect Ozon + WB
+- ✅ `/calculator` — калькулятор юнит-экономики
+- ✅ `/unit-economics` — таблица прибыли по товарам (NEW)
+- ✅ `/pricing` — 990 ₽/мес
+- ✅ `/expired` — окончание trial
+- ✅ Авто-sync при заходе на страницы (без кнопок)
+
+### Инфраструктура
+- ✅ VPS #1 (91.142.73.226, РФ) — backend + frontend
+- ✅ Caddy (SSL Let's Encrypt, reverse-proxy)
+- ✅ Neon PostgreSQL (managed, Frankfurt)
+- ✅ Cloudflare DNS (DNS only для всех записей)
+- ✅ GitHub Actions — автодеплой фронта (rsync через SSH)
+- ✅ Docker Compose для backend
+- ✅ Scheduler: Ozon 30 мин, WB 180 мин
+
+### Качество
+- ✅ 113 тестов, все зелёные
+- ✅ mypy strict, ruff, pre-commit
+- ⚠️ CI не настроен для backend (pre-push hook есть)
+
+---
+
+# ЧАСТЬ 3: СТЕК ТЕХНОЛОГИЙ
+
+## Backend
+| Слой | Технология |
+|---|---|
+| Фреймворк | FastAPI 0.115 |
+| ORM | SQLAlchemy 2.0.36 (async) |
+| Драйвер БД | asyncpg 0.30 |
+| БД прод | Neon PostgreSQL (Frankfurt) |
+| Миграции | Alembic 1.13 (async) |
+| Auth | JWT (access + refresh, HttpOnly cookie) |
+| Пароли | bcrypt через passlib |
+| Шифрование ключей | Fernet (`ENCRYPTION_KEY` в env) |
+| Scheduler | APScheduler 3.10 (async) |
+| HTTP-клиент | httpx |
+| Pydantic | 2.9.2 |
+| Тесты | pytest + pytest-asyncio, 113 тестов |
+
+## Frontend
+| Слой | Технология |
+|---|---|
+| Фреймворк | React 18 + TypeScript |
+| Сборка | Vite 4 |
+| Стили | Tailwind CSS 3 |
+| Состояние | Zustand |
+| HTTP | axios + interceptors (auto-refresh) |
+| Роутинг | React Router 6 |
+| Хостинг | VPS #1 (РФ), статика через Caddy |
+
+## Инфраструктура
+| Компонент | Где |
+|---|---|
+| Backend + Frontend | VPS #1 (91.142.73.226, РФ) |
+| Reverse-proxy + SSL | Caddy (Let's Encrypt) |
+| БД | Neon PostgreSQL |
+| DNS | Cloudflare |
+| CI/CD фронта | GitHub Actions |
+| Локально | Docker Compose (my-app-api + my-app-db) |
+
+---
+
+# ЧАСТЬ 4: МОДЕЛИ ДАННЫХ
+
+## `User`
+- `id`, `email` (unique), `name`, `hashed_password`
+- `subscription_status` (`none` / `trialing` / `active` / `expired`)
+- `trial_started_at`, `trial_ends_at`, `subscription_ends_at`
+- `created_at`
+
+## `Marketplace` (справочник)
+- `id`, `code` (unique), `name`
+- Known: `ozon`, `wildberries`, `yandex_market`, `aliexpress`, `avito`
+- ⚠️ WB в БД имеет код `wildberries`, хотя API-пути — `/integrations/wb/*`
+
+## `DeliveryService` (справочник)
+- `id`, `code` (unique), `name`
+- Known: `cdek`, `boxberry`, `russian_post`, `dhl`
+
+## `Product`
+- `id`, `user_id`, `sku` (unique с user_id), `name`, `description`
+- **Юнит-экономика:** `cost_price`, `volume_liters`, `length_cm`, `width_cm`, `height_cm`
+- `created_at`
+
+## `Sale`
+- `id`, `user_id`, `marketplace_id`, `product_id`, `delivery_service_id`
+- `external_id`, `quantity`, `price`, `sold_at`, `created_at`
+- **Юнит-экономика:**
+  - `commission`, `commission_percent`
+  - `logistics_cost`, `return_logistics_cost`
+  - `acquiring_fee`, `acquiring_percent`
+  - `storage_cost`
+  - `spp_percent`, `spp_amount`, `retail_price_with_spp`
+  - `payout_amount`
+- **🟡 ROADMAP: реклама** — `advertising_cost`, `advertising_type` (internal/external)
+
+## `MarketplaceAccount`
+- `id`, `user_id`, `marketplace_id`
+- `client_id` (nullable — у WB нет)
+- `api_key_encrypted` (Fernet)
+- `created_at`, `updated_at`, **`last_sync_at`** (NEW)
+- `user`, `marketplace` (relationships)
+
+## `TaxSettings`
+- `id`, `user_id` (unique — one-to-one)
+- `tax_system` (`NPD` / `USN_INCOME` / `USN_INCOME_EXPENSE` / `PSN`)
+- `tax_rate` (Decimal 5,2)
+- `insurance_contributions` (default 57390 ₽ — взносы ИП 2026)
+- `vat_enabled`, `vat_rate`
+- `created_at`, `updated_at`
+
+## `RefreshToken`, `TrialIdentity`, `Payment`
+- `RefreshToken` — refresh-токены с ротацией
+- `TrialIdentity` — защита от повторного trial
+- `Payment` — история платежей (для ЮKassa, готово но отключено)
+
+---
+
+# ЧАСТЬ 5: API-ЭНДПОИНТЫ
+
+## Auth
+- `POST /auth/register` — регистрация + trial 30 дней
+- `POST /auth/login` — вход, access + refresh
+- `POST /auth/refresh` — обновление access
+- `POST /auth/logout` — выход
+- `GET /users/me` — текущий юзер с подпиской
+
+## Products
+- `POST /products` — создание
+- `GET /products` — список
+- `GET /products/{id}` — детали
+- 🟡 **ROADMAP: `PATCH /products/{id}`** — обновление (себестоимость, габариты)
+
+## Sales
+- `POST /sales`, `GET /sales`
+
+## Marketplaces, DeliveryServices
+- `GET /marketplaces`, `GET /delivery-services` — публичные справочники
+
+## Integrations
+### Ozon
+- `POST /integrations/ozon/connect`
+- `POST /integrations/ozon/sync/products`
+- `POST /integrations/ozon/sync/sales?from=...&to=...`
+- Внутри sync — **FBS + FBO** (универсально)
+
+### WB
+- `POST /integrations/wb/connect`
+- `POST /integrations/wb/sync/products`
+- `POST /integrations/wb/sync/sales?from=...&to=...` — ⚠️ API deprecated
+- ⚠️ Лимиты Базового токена: products 1/час, sales 1/3 часа
+
+### Общие
+- `GET /integrations/accounts` — список подключённых
+- `POST /integrations/sync-if-stale` — авто-sync (NEW, пороги)
+
+## Tax Settings
+- `GET /tax-settings`, `PUT /tax-settings`, `DELETE /tax-settings`
+
+## Analytics (9 эндпоинтов)
+- `GET /analytics/summary?from=...&to=...`
+- `GET /analytics/by-marketplace?from=...&to=...`
+- `GET /analytics/by-product?from=...&to=...`
+- `GET /analytics/unit-economics?product_id=...&from=...&to=...` — по одному товару
+- `GET /analytics/unit-economics/all?from=...&to=...` — **по всем товарам (NEW)**
+- `GET /analytics/profit?from=...&to=...` — сводка прибыли по площадкам
+- `GET /analytics/abc?from=...&to=...` — ABC-анализ
+- `POST /analytics/calculator` — калькулятор до закупки
+
+## Utility
+- `GET /health` — health check
+- `GET /docs` — Swagger
+
+---
+
+# ЧАСТЬ 6: FRONTEND-СТРАНИЦЫ
+
+| URL | Что показывает | Статус |
+|---|---|---|
+| `/login`, `/register` | Auth | ✅ |
+| `/` | Dashboard (сводка, 5 карточек, фильтр 7/30/90, авто-sync) | ✅ |
+| `/products` | Список товаров | ✅ |
+| `/sales` | Список продаж | ✅ |
+| `/integrations` | Ozon + WB карточки + кнопки ручного sync | ✅ |
+| `/calculator` | Калькулятор юнит-экономики | ✅ |
+| `/unit-economics` | **Таблица прибыли по товарам** (фильтр убыточных, сортировка) | ✅ |
+| `/pricing` | Тариф 990 ₽/мес | ✅ |
+| `/expired` | Окончание trial | ✅ |
+
+## 🟡 ROADMAP: страницы
+
+| URL | Что | Эндпоинт готов? |
+|---|---|---|
+| `/profit` | Дашборд по площадкам | ✅ |
+| `/abc` | ABC-анализ (pie-chart) | ✅ |
+| `/tax-settings` | Форма налогов | ✅ |
+| `/products/{id}` | Карточка товара + редактирование | 🟡 нужен бэкенд |
+
+## Стиль фронта
+- `max-w-6xl` / `max-w-7xl` для страниц, `text-2xl font-bold` для заголовков
+- Карточки: `bg-white rounded-lg shadow-sm p-5`
+- Формат денег: `Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB" })`
+- Ошибки: `bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md`
+- Убыточные строки: `bg-red-50`, прибыльные значения — `text-green-600`
+
+---
+
+# ЧАСТЬ 7: ИНФРАСТРУКТУРА
+
+## VPS #1 (91.142.73.226, РФ, Ubuntu 22.04)
+- **1 vCPU, 1.9 ГБ RAM, 50 ГБ SSD, 2 ГБ swap**
+- Боты (не трогаем): `pairs-bot.service`, `pairs-moex.service`
+- Backend: `/opt/my-app`, Docker Compose
+- Frontend: `/var/www/agregators/` (статика)
+- Caddy: `/etc/caddy/Caddyfile`
+
+### Caddyfile
+```caddy
+agregators.su {
+    root * /var/www/agregators
+    file_server
+    try_files {path} /index.html
+    encode gzip
+}
+
+www.agregators.su {
+    redir https://agregators.su{uri} permanent
+}
+
+api.agregators.su {
+    reverse_proxy localhost:8000
+    encode gzip
+}
+```
+
+## Cloudflare DNS
+
+| Name | Type | Content | Proxy |
+|---|---|---|---|
+| `agregators.su` | A | `91.142.73.226` | DNS only ⚪ |
+| `www.agregators.su` | A | `91.142.73.226` | DNS only ⚪ |
+| `api.agregators.su` | A | `91.142.73.226` | DNS only ⚪ |
+
+## Neon (PostgreSQL)
+
+- Region: `aws-eu-central-1` (Frankfurt)
+- Plan: Free
+- **URL:** без `-pooler` (asyncpg не работает с PgBouncer в transaction mode)
+
+## GitHub Actions (автодеплой фронта)
+
+- **Триггер:** push в `main`
+- **Шаги:** checkout → Node 20 → `npm ci` → `npm run build` → rsync на VPS
+- **Секреты:** `VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`
+- **SSH-ключ:** `~/.ssh/github_actions_deploy` (на Mac), публичная часть — `authorized_keys` на VPS
+- **Время:** ~40–120 секунд
+
+## Docker Compose (прод)
+
+```yaml
+# /opt/my-app/docker-compose.prod.yml
+services:
+  api:
+    build: .
+    container_name: my-app-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+```
+
+## Переменные окружения (`.env`)
+
+```env
+DATABASE_URL=postgresql+asyncpg://...@ep-xxx.neon.tech/neondb?ssl=require
+JWT_SECRET=<...>
+ENCRYPTION_KEY=<fernet-key>
+COOKIE_SECURE=true
+COOKIE_DOMAIN=.agregators.su
+TRIAL_PERIOD_DAYS=30
+SUBSCRIPTION_PERIOD_DAYS=30
+SUBSCRIPTION_PRICE_RUB=990
+```
+
+---
+
+# ЧАСТЬ 8: АРХИТЕКТУРА BACKEND
+
+```
+my-app/
+├── app/
+│   ├── main.py                    # точка входа, роутеры, CORS, lifespan
+│   ├── config.py                  # Settings (pydantic)
+│   ├── database.py                # engine, AsyncSessionLocal
+│   ├── models.py                  # User, Marketplace, Product, Sale, TaxSettings...
+│   ├── schemas.py                 # Pydantic-схемы
+│   ├── security.py                # bcrypt, JWT
+│   ├── crypto.py                  # Fernet (ENCRYPTION_KEY)
+│   ├── deps.py                    # get_session, get_current_user, require_active_subscription
+│   ├── trial.py                   # hash_identity, hash_email
+│   ├── scheduler.py               # APScheduler + sync Ozon/WB
+│   ├── sync_service.py            # NEW: sync-if-stale, пороги устаревания
+│   ├── ozon_client.py             # httpx-клиент Ozon (FBS + FBO)
+│   ├── wb_client.py               # httpx-клиент WB
+│   ├── yookassa_client.py         # ЮKassa (отключён)
+│   ├── routers/
+│   │   ├── auth.py, users.py, products.py, sales.py
+│   │   ├── marketplaces.py, delivery_services.py
+│   │   ├── analytics.py           # 8 эндпоинтов + unit-economics/all
+│   │   ├── integrations.py        # Ozon + WB + sync-if-stale
+│   │   ├── tax_settings.py
+│   │   └── subscriptions.py       # ЮKassa (отключён)
+│   └── services/
+│       └── unit_economics.py      # расчёт юнит-экономики
+├── alembic/versions/              # миграции
+├── tests/                         # 113 тестов
+├── Dockerfile
+├── docker-compose.yml             # dev
+├── docker-compose.prod.yml        # prod (без db)
+├── pyproject.toml                 # ruff + mypy
+└── .pre-commit-config.yaml
+```
+
+## `sync_service.py` — авто-sync
+
+**Пороги устаревания (в минутах):**
+```python
+STALE_THRESHOLDS = {
+    "ozon": 15,                    # Ozon — каждые 15 минут
+    "wildberries_product": 60,     # WB products — 1 час (лимит Базового токена)
+    "wildberries_sales": 180,      # WB sales — 3 часа
+}
+```
+
+**Эндпоинт `POST /integrations/sync-if-stale`:**
+1. Проверяет `last_sync_at` для каждого аккаунта.
+2. Для устаревших — запускает sync в фоне (`asyncio.create_task`).
+3. Возвращает **сразу** — не блокирует UI.
+4. In-memory lock — не запускает дубли.
+
+**Frontend** вызывает этот эндпоинт через `useSyncOnMount()` хук:
+- Загрузка данных мгновенно (из БД).
+- Через 1 сек — триггер `sync-if-stale`.
+- Если sync запущен — polling каждые 5 сек (60 сек максимум).
+
+## `unit_economics.py`
+
+**Формула:**
+```
+net_price = price − spp_amount
+marketplace_costs = commission + logistics + return_logistics + acquiring + storage
+payout = net_price − marketplace_costs
+cogs = cost_price × quantity
+gross_profit = payout − cogs
+tax = calculate_tax(...)
+net_profit = gross_profit − tax
+margin_percent = net_profit / net_revenue × 100
+roi_percent = net_profit / cogs × 100
+```
+
+## Клиенты маркетплейсов
+
+### `OzonClient` (httpx)
+- `get_seller_info()`, `list_products()`, `get_product_info()`
+- `list_postings_for_range()` — **FBS**
+- `list_fbo_postings_for_range()` — **FBO (NEW)**
+- Заголовки: `Client-Id`, `Api-Key`
+- Разбивка периода на 30-дневные чанки
+
+**Sync продаж** вызывает **оба** метода (FBS + FBO) и объединяет.
+
+### `WBClient` (httpx)
+- `ping()`, `list_products()`, `list_sales_report(date_from, date_to)`
+- Заголовок: `Authorization: <token>` (без `Bearer`!)
+- Домены: `common-api`, `content-api`, `statistics-api` WB
+
+---
+
+# ЧАСТЬ 9: КОНКУРЕНТНЫЙ АНАЛИЗ
+
+## MPProfit
+
+**Что:** финансовая аналитика для WB/Ozon. Ядро — реальная прибыль с учётом комиссий, логистики, СПП, хранения, **рекламы**, налогов, себестоимости.
+
+**Сильные стороны:**
+- Рекламный блок (ДРР — внутренняя + внешняя реклама).
+- Интеграция с 1С, бухгалтерией.
+- Прогнозы, планирование закупок.
+- API-доступ.
+- Юнит-экономика + ABC.
+
+**Цена:** 1500–5000 ₽/мес.
+
+**Слабые стороны:**
+- Дороже.
+- Перегруженный интерфейс (общая проблема финансовых сервисов).
+
+## MPStatus
+
+**Что:** комбайн. Аналитика + операционка FBS + PIM + управление остатками + автоматизация цен + отзывы/вопросы + чат-боты.
+
+**Сильные стороны:**
+- **Единая лента заказов** (Ozon + WB).
+- **Печать этикеток** пачкой.
+- **PIM** — работа с карточками.
+- **Управление поставками на FBO**.
+- Автоматизация цен и акций.
+- Отзывы/вопросы.
+- Telegram-уведомления.
+
+**Цена:** 2000–6000 ₽/мес.
+
+**Слабые стороны:**
+- Огромный функционал — сложно освоить.
+- Требует времени на настройку.
+
+## Наши позиции
+
+**Сильные:**
+1. **Фокус** — только реальная прибыль + юнит-экономика. Не комбайн.
+2. **Цена** — 990 ₽/мес. Ниже MPProfit в 2–5 раз.
+3. **Простой UI** — минимум кликов, автоматическая синхронизация.
+4. **Доступ из РФ** без VPN.
+
+**Слабые (пробелы):**
+1. 🟡 **Нет рекламного блока** — главный пробел vs MPProfit.
+2. 🟡 **Нет 1С** — может быть блокером для ЦА 500к+.
+3. 🟡 **Нет Telegram-уведомлений**.
+4. 🟢 **Нет FBS-операционки** — не пытаемся догнать MPStatus.
+5. 🟢 **Нет PIM**.
+6. 🟢 **Нет отзывов/вопросов**.
+
+**Стратегия:** узкий фокус на «реальной прибыли» + агрессивная цена. **Не пытаемся догнать MPStatus** в операционке. Закрываем **пробелы vs MPProfit** (реклама, 1С).
+
+---
+
+# ЧАСТЬ 10: ROADMAP
+
+## 🔴 Высокий приоритет (2–4 недели)
+
+### 1. `/unit-economics` — есть ✅
+Таблица прибыли по товарам с сортировкой и фильтром убыточных. **Уже в проде.**
+
+### 2. Редактирование себестоимости (D) 🟡
+- Backend: `PATCH /products/{id}`, схема `ProductUpdate` (все поля optional).
+- Frontend: модалка «Редактировать товар» на `/products`.
+- **Зачем:** без себестоимости ROI = 0, часть аналитики не работает.
+
+### 3. Рекламный блок (ДРР) 🔴
+**Закрывает главный пробел vs MPProfit.**
+- Model: `AdvertisingCost` (или поля `advertising_cost`, `advertising_type` в `Sale`).
+- Формула: `net_profit_with_ads = net_profit − advertising_cost`.
+- Метрика: **ДРР** = advertising_cost / revenue × 100.
+- Эндпоинт: `GET /analytics/profit?include_ads=true`.
+- Frontend: колонки «Прибыль с рекламой» и «ДРР» на `/unit-economics`.
+- **Источник данных:** ручной ввод (быстро) → API Ozon Ads / WB Ads (сложно).
+- **Оценка:** 1–2 дня.
+
+### 4. Frontend-страницы аналитики
+- `/profit` — дашборд по площадкам (эндпоинт готов).
+- `/abc` — ABC-анализ + pie-chart (эндпоинт готов).
+- `/tax-settings` — форма налогов (эндпоинт готов).
+- **Оценка:** 1–1.5 дня.
+
+## 🟡 Средний приоритет (1–2 месяца)
+
+### 5. WB Sales API fix
+- WB закрыл `statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod`.
+- Нужен новый эндпоинт (см. `dev.wildberries.ru/release-notes?id=498`).
+- **Оценка:** 1–2 часа.
+
+### 6. Экспорт в 1С
+- `GET /export/1c?from=...&to=...` → Excel/CSV.
+- Формат: `Дата | Номер заказа | SKU | Количество | Цена | Комиссия | Логистика | Налог | Прибыль`.
+- Позже — API 1С через OData.
+- **Оценка:** 1–2 дня.
+
+### 7. Telegram-уведомления
+- Бот + подписки в БД.
+- Уведомления: «Новый заказ», «Товар стал убыточным», «Ежедневный отчёт».
+- **Оценка:** 1–2 дня.
+
+### 8. ЮKassa (монетизация)
+- Раскомментировать `subscriptions.router` в `main.py`.
+- Настроить webhook URL.
+- Environment: `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`.
+- **Оценка:** 2–4 часа.
+
+### 9. Регистрация на WB API (Сервисный токен)
+- Оформить юрлицо/ИП.
+- Заявка на `business-solutions@rwb.ru`.
+- Получить **Сервисный токен** (расширенные лимиты).
+- **1–2 недели** (организационный процесс, параллельно).
+
+### 10. Третий маркетплейс (Я.Маркет)
+- По образцу Ozon: клиент, connect, 2 sync, scheduler, фронт-карточка.
+- **Оценка:** 1 день (архитектура готова).
+
+## 🟢 Низкий приоритет (потом)
+
+### 11. PIM — управление карточками
+- Создание/редактирование товаров в одном интерфейсе.
+- «Разлив» карточки на Ozon + WB.
+- ИИ-генерация описаний.
+- **Оценка:** 3–5 дней.
+
+### 12. Операционка FBS
+- Единая лента заказов.
+- Печать этикеток пачкой.
+- Синхронизация остатков.
+- Telegram-уведомления о новых заказах.
+- **Оценка:** 5–7 дней.
+- ⚠️ **Это уже конкуренция с MPStatus** — не приоритет без команды.
+
+### 13. AliExpress
+- По образцу Я.Маркета.
+
+### 14. Email-подтверждение
+- Resend (бесплатно 3000 писем/мес).
+- Поля `email_verified`, `email_verification_token`.
+- Страница `/verify`.
+
+---
+
+# ЧАСТЬ 11: ИЗВЕСТНЫЕ ПРОБЛЕМЫ И ДОЛГИ
+
+## Backend
+
+1. **WB Sales API deprecated** — sync продаж WB не работает.
+2. **`ENCRYPTION_KEY` vs `FERNET_KEY`** — в коде используется `ENCRYPTION_KEY`, но в старой спеке упоминался `FERNET_KEY`. Если кто-то путает — будет ошибка Fernet.
+3. **Docker `.pyc` кэш** — при `docker cp` код не перечитывается, нужен `restart`. Правильно — `docker compose build && up -d`.
+4. **CORS захардкожен** в `main.py` (не читается из env).
+5. **`docker-compose.prod.yml` не монтирует `/opt/my-app`** — правильно для прода, но правки кода требуют `--build`.
+
+## Frontend
+
+1. **`.env.production` закоммичен** — содержит `VITE_API_URL`. Не секрет, но некрасиво. Можно вынести в GitHub Actions env.
+2. **Vite dev-сервер** — при `npm run dev` нужен `VITE_API_URL=http://localhost:8000` (в `.env.local`).
+
+## Инфраструктура
+
+1. **VPS — 1 vCPU, 1.9 ГБ RAM** — на пределе. Апгрейд до 2 vCPU / 4 ГБ, когда вырастет нагрузка.
+2. **Neon — Frankfurt** — задержка ~30–50 мс. Можно перенести Postgres на VPS (когда нагрузка вырастет).
+
+## Качество
+
+1. **Backend CI не настроен** (только pre-push hook). Pre-commit работает локально.
+2. **113 тестов** — покрытие неполное (нет тестов на sync_service, unit_economics/all).
+
+---
+
+# ЧАСТЬ 12: ПРАВИЛА РАЗРАБОТКИ
+
+## При работе с кодом
+
+1. **Decimal vs float** — деньги всегда `Decimal`, в тестах строки `"1000.00"`.
+2. **`Decimal("0")` сериализуется в `"0.00"`** — в тестах сравнивать с `"0.00"`.
+3. **YAML чувствителен к отступам** — не вставлять блоки целиком из чата.
+4. **При вставке в конец файла** — сначала `Cmd + End` → `Enter Enter` → `Cmd + V`.
+5. **Патчить классы в тестах** через полный путь: `app.routers.integrations.WBClient.ping`.
+6. **venv обязательно активировать** перед `pre-commit`, `alembic`, `pytest`.
+
+## При деплое
+
+1. **Миграции — автоматически** при старте контейнера (`alembic upgrade head` в `CMD`).
+2. **FastAPI Cloud больше не используется** — всё на VPS.
+3. **Docker-кэш** — при правке роутеров делать `--build` (или `--no-cache` для гарантии).
+4. **CORS на проде** — `main.py` захардкожен, при смене домена править вручную.
+
+## При работе с маркетплейсами
+
+1. **WB Базовый токен жёсткие лимиты:** products 1/час, sales 1/3 часа.
+2. **WB API меняется** — следить за `dev.wildberries.ru/release-notes`.
+3. **Ozon имеет FBS и FBO** — sync продаж должен вызывать оба метода.
+4. **WB заголовок без `Bearer`** — просто `Authorization: <token>`.
+5. **URL `/wb/*`, а marketplace code `wildberries`** — осознанное решение.
+
+## При работе с фронтом
+
+1. **GitHub Actions автодеплой** — `git push` → прод через 1–2 минуты.
+2. **`npx tsc --noEmit`** — проверка типов без сборки.
+3. **`npm run build`** — продакшн-сборка.
+4. **Hard-refresh после деплоя** — `Cmd+Shift+R` для обновления кэша.
+
+## При работе с VPS
+
+1. **Файлы в `/opt/my-app/`** — источник правды, но требуют `--build` для контейнера.
+2. **`docker cp`** — временно, слетит при рестарте.
+3. **`SPEC.md`** — этот файл, обновлять при крупных изменениях.
+
+---
+
+# ЧАСТЬ 13: ПОЛЕЗНЫЕ КОМАНДЫ
+
+## Локальная разработка (Mac)
+```bash
+cd ~/projects/my-app
+source .venv/bin/activate
+docker compose up -d
+docker compose exec api pytest -v
+docker compose exec api pre-commit run --all-files
+```
+
+## Frontend (Mac)
+```bash
+cd ~/projects/my-app-frontend
+npm run dev              # dev-сервер
+npx tsc --noEmit         # проверка типов
+npm run build            # прод-сборка
+git push                 # автодеплой
+```
+
+## VPS — backend
+```bash
+ssh root@91.142.73.226
+cd /opt/my-app
+
+# Перезапуск
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d
+
+# Пересборка при правках кода
+docker compose -f docker-compose.prod.yml build api
+docker compose -f docker-compose.prod.yml up -d
+
+# Логи
+docker compose -f docker-compose.prod.yml logs --tail=50 api
+
+# Миграции
+docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+docker compose -f docker-compose.prod.yml exec -T api alembic revision --autogenerate -m "..."
+```
+
+## VPS — Caddy
+```bash
+nano /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+systemctl status caddy
+journalctl -u caddy --no-pager | tail -30
+```
+
+## VPS — frontend
+```bash
+ls -la /var/www/agregators/
+ls -la /var/www/agregators/assets/
+# При ручном обновлении: scp -r dist/* root@91.142.73.226:/var/www/agregators/
+```
+
+## Полезные запросы
+```bash
+# Проверка backend
+curl https://api.agregators.su/health
+
+# Логин
+TOKEN=$(curl -s -X POST https://api.agregators.su/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"trial-1789389840@example.com","password":"secret123","name":"ignored"}' \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+# Sync-if-stale
+curl -X POST https://api.agregators.su/integrations/sync-if-stale \
+  -H "Authorization: Bearer $TOKEN"
+
+# Юнит-экономика
+curl -s "https://api.agregators.su/analytics/unit-economics/all?from=2026-09-06T00:00:00Z&to=2026-10-06T23:59:59Z" \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+---
+
+# ФИНАЛЬНАЯ ЗАМЕТКА
+
+**Проект в сильной точке:** backend production-ready, frontend с ключевыми фичами, авто-sync, автодеплой, доступ из РФ без VPN.
+
+**Ключевое конкурентное преимущество:** реальная прибыль с учётом СПП и налогов.
+
+**Главный пробел vs MPProfit:** реклама (ДРР). **Следующий шаг** — закрыть его.
+
+**Стратегия:** узкий фокус + агрессивная цена (990 ₽) + простой UI. Не пытаемся догнать MPStatus в операционке.
+).
