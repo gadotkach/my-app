@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
@@ -413,3 +413,73 @@ class CalculatorResponse(BaseModel):
     roi_percent: Decimal
     profit_per_unit: Decimal
     warning: str | None = None
+
+
+# ============================================================
+# Advertising / ДРР
+# ============================================================
+
+
+class AdvertisingExpenseCreate(BaseModel):
+    """Создание расхода на рекламу."""
+
+    marketplace_code: str | None = None  # 'ozon' | 'wildberries' | None (внешняя реклама)
+    product_id: int | None = None  # опционально — привязка к SKU
+    source: str  # 'ozon_ads' | 'wb_adv' | 'yandex_direct' | 'vk_ads' | 'telegram_ads' | 'manual'
+    date_from: date
+    date_to: date
+    amount: Decimal
+    note: str | None = None
+
+
+class AdvertisingExpenseRead(BaseModel):
+    """Расход на рекламу (ответ)."""
+
+    id: int
+    marketplace_code: str | None
+    product_id: int | None
+    product_name: str | None
+    source: str
+    date_from: date
+    date_to: date
+    amount: Decimal
+    note: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdvertisingBySource(BaseModel):
+    """Разбивка расходов по источнику."""
+
+    source: str
+    amount: Decimal
+    drr_percent: Decimal
+
+
+class AdvertisingByMarketplace(BaseModel):
+    """Разбивка расходов по площадке."""
+
+    marketplace_code: str | None
+    marketplace_name: str | None
+    amount: Decimal
+    drr_percent: Decimal
+
+
+class AdvertisingSummaryResponse(BaseModel):
+    """Сводка расходов на рекламу за период."""
+
+    period_from: date
+    period_to: date
+
+    total_advertising_cost: Decimal
+    total_revenue: Decimal
+    drr_percent: Decimal  # ДРР = advertising / revenue * 100
+
+    # Прибыль с учётом рекламы
+    net_profit_without_ads: Decimal
+    net_profit_with_ads: Decimal
+
+    # Разбивки
+    by_source: list[AdvertisingBySource]
+    by_marketplace: list[AdvertisingByMarketplace]

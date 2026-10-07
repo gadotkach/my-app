@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.database import engine
 from app.routers import (
+    advertising,
     analytics,
     auth,
     delivery_services,
@@ -62,6 +63,7 @@ app.include_router(sales.router)
 app.include_router(analytics.router)
 app.include_router(integrations.router)
 app.include_router(tax_settings.router)
+app.include_router(advertising.router)
 
 
 @app.get("/health")

@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Numeric,
@@ -216,3 +217,38 @@ class TaxSettings(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="tax_settings")
+
+
+class AdvertisingExpense(Base):
+    """
+    Расходы на рекламу. Может быть привязан к площадке и/или товару.
+    Используется для расчёта ДРР (доля рекламных расходов).
+
+    Источники (source):
+    - 'ozon_ads'       — внутренняя реклама Ozon (Продвижение, Трафареты)
+    - 'wb_adv'         — внутренняя реклама WB (Поиск, Автореклама, Аукцион)
+    - 'yandex_direct'  — Яндекс.Директ
+    - 'vk_ads'         — VK Реклама
+    - 'telegram_ads'   — Telegram Ads
+    - 'manual'         — ручной ввод (неклассифицированные)
+    """
+
+    __tablename__ = "advertising_expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    marketplace_id: Mapped[int | None] = mapped_column(
+        ForeignKey("marketplaces.id"), nullable=True, index=True
+    )
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(50), index=True)
+    date_from: Mapped[date] = mapped_column(Date, index=True)
+    date_to: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    marketplace: Mapped["Marketplace | None"] = relationship()
+    product: Mapped["Product | None"] = relationship()
