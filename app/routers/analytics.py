@@ -197,39 +197,73 @@ async def summary(
     current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> AnalyticsSummary:
-    stmt = select(
-        func.count(Sale.id).label("sales_count"),
-        func.coalesce(func.sum(Sale.price * Sale.quantity), 0).label("total_revenue"),
-        func.coalesce(func.sum(Sale.commission), 0).label("total_commission"),
-        func.coalesce(func.sum(Sale.logistics_cost), 0).label("total_logistics"),
-    ).where(
+    """Сводка за период — полная юнит-экономика (с себестоимостью, налогами, рекламой)."""
+    # 1. Все продажи за период
+    sales_stmt = select(Sale).where(
         Sale.user_id == current_user.id,
         Sale.sold_at >= from_date,
         Sale.sold_at <= to_date,
     )
-    row = (await session.execute(stmt)).one()
-    revenue = Decimal(row.total_revenue)
-    commission = Decimal(row.total_commission)
-    logistics = Decimal(row.total_logistics)
-    net_profit = revenue - commission - logistics
+    sales = list((await session.execute(sales_stmt)).scalars().all())
 
-    # Реклама / ДРР
+    if not sales:
+        return AnalyticsSummary(
+            period_from=from_date,
+            period_to=to_date,
+            sales_count=0,
+            total_revenue=Decimal("0"),
+            total_commission=Decimal("0"),
+            total_logistics=Decimal("0"),
+            net_profit=Decimal("0"),
+            advertising_cost=Decimal("0"),
+            drr_percent=Decimal("0"),
+            net_profit_with_ads=Decimal("0"),
+        )
+
+    # 2. Товары и tax_settings
+    product_ids = {s.product_id for s in sales if s.product_id is not None}
+    products_map: dict[int, Product] = {}
+    if product_ids:
+        products_stmt = select(Product).where(Product.id.in_(product_ids))
+        products = (await session.execute(products_stmt)).scalars().all()
+        products_map = {p.id: p for p in products}
+
+    tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
+    tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+    period_days = max(1, (to_date - from_date).days)
+
+    # 3. Юнит-экономика по каждой продаже
+    contributions_per_sale = _prorated_contributions_per_sale(tax_settings, len(sales), period_days)
+    results = [
+        calculate_unit_economics(
+            s, products_map.get(s.product_id or 0), tax_settings, contributions_per_sale
+        )
+        for s in sales
+    ]
+
+    # 4. Суммы
+    total_revenue = sum((r.gross_price * r.quantity for r in results), Decimal("0"))
+    total_commission = sum((r.commission * r.quantity for r in results), Decimal("0"))
+    total_logistics = sum((r.logistics * r.quantity for r in results), Decimal("0"))
+    net_profit = sum((r.net_profit for r in results), Decimal("0"))
+
+    # 5. Реклама / ДРР
     adv = await _distribute_advertising_cost(session, current_user.id, from_date, to_date)
     advertising_cost = adv["total"]
     drr_percent = (
-        (advertising_cost / revenue * Decimal("100")).quantize(Decimal("0.01"))
-        if revenue > 0
+        (advertising_cost / total_revenue * Decimal("100")).quantize(Decimal("0.01"))
+        if total_revenue > 0
         else Decimal("0")
     )
-    net_profit_with_ads = net_profit - advertising_cost
+    net_profit_with_ads = (net_profit - advertising_cost).quantize(Decimal("0.01"))
 
     return AnalyticsSummary(
         period_from=from_date,
         period_to=to_date,
-        sales_count=row.sales_count,
-        total_revenue=revenue,
-        total_commission=commission,
-        total_logistics=logistics,
+        sales_count=len(sales),
+        total_revenue=total_revenue,
+        total_commission=total_commission,
+        total_logistics=total_logistics,
         net_profit=net_profit,
         advertising_cost=advertising_cost,
         drr_percent=drr_percent,
