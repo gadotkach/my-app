@@ -156,6 +156,7 @@ async def test_sync_sales_no_postings(client):
     with patch("app.routers.integrations.OzonClient") as mock_cls:
         mock_instance = mock_cls.return_value.__aenter__.return_value
         mock_instance.list_postings_for_range = AsyncMock(return_value=[])
+        mock_instance.list_fbo_postings_for_range = AsyncMock(return_value=[])
 
         response = await client.post(
             "/integrations/ozon/sync/sales",
@@ -203,6 +204,7 @@ async def test_sync_sales_creates_sales(client):
     with patch("app.routers.integrations.OzonClient") as mock_cls:
         mock_instance = mock_cls.return_value.__aenter__.return_value
         mock_instance.list_postings_for_range = AsyncMock(return_value=postings_mock)
+        mock_instance.list_fbo_postings_for_range = AsyncMock(return_value=[])
 
         response = await client.post(
             "/integrations/ozon/sync/sales",
