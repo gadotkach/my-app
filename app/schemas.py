@@ -129,6 +129,11 @@ class AnalyticsSummary(BaseModel):
     total_logistics: Decimal
     net_profit: Decimal
 
+    # Реклама / ДРР
+    advertising_cost: Decimal = Decimal("0")
+    drr_percent: Decimal = Decimal("0")
+    net_profit_with_ads: Decimal = Decimal("0")
+
 
 class RefreshResponse(BaseModel):
     access_token: str
@@ -287,6 +292,11 @@ class UnitEconomicsProductItem(BaseModel):
     tax_amount: Decimal
     net_profit: Decimal
 
+    # Реклама / ДРР
+    advertising_cost: Decimal = Decimal("0")
+    drr_percent: Decimal = Decimal("0")
+    net_profit_with_ads: Decimal = Decimal("0")
+
     # Метрики
     margin_percent: Decimal
     roi_percent: Decimal
@@ -316,6 +326,11 @@ class UnitEconomicsAllResponse(BaseModel):
     total_tax: Decimal
     total_net_profit: Decimal
 
+    # Реклама / ДРР
+    total_advertising_cost: Decimal = Decimal("0")
+    drr_percent: Decimal = Decimal("0")
+    total_net_profit_with_ads: Decimal = Decimal("0")
+
     # Список товаров, отсортированный по прибыли (убывание)
     products: list[UnitEconomicsProductItem]
 
@@ -331,6 +346,11 @@ class ProfitByMarketplace(BaseModel):
     net_profit: Decimal
     margin_percent: Decimal
 
+    # Реклама / ДРР
+    advertising_cost: Decimal = Decimal("0")
+    drr_percent: Decimal = Decimal("0")
+    net_profit_with_ads: Decimal = Decimal("0")
+
 
 class ProfitSummaryResponse(BaseModel):
     period_from: datetime
@@ -341,6 +361,12 @@ class ProfitSummaryResponse(BaseModel):
     total_tax: Decimal
     total_net_profit: Decimal
     margin_percent: Decimal
+
+    # Реклама / ДРР
+    total_advertising_cost: Decimal = Decimal("0")
+    drr_percent: Decimal = Decimal("0")
+    total_net_profit_with_ads: Decimal = Decimal("0")
+
     by_marketplace: list[ProfitByMarketplace]
 
 

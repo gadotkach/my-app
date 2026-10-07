@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
+from typing import TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -60,7 +61,133 @@ def _prorated_contributions_per_sale(
     return (prorated / _D(str(num_sales))).quantize(_D("0.01"))
 
 
+class AdvertisingDistribution(TypedDict):
+    """Результат распределения рекламных расходов."""
+
+    total: Decimal
+    by_product: dict[int, Decimal]
+    by_marketplace: dict[int, Decimal]
+
+
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+async def _distribute_advertising_cost(
+    session: "AsyncSession",
+    user_id: int,
+    from_date: datetime,
+    to_date: datetime,
+) -> AdvertisingDistribution:
+    """
+    Собирает расходы на рекламу за период и распределяет их:
+    - по товарам (product_id)
+    - по площадкам (marketplace_id)
+    - общая сумма
+
+    Логика:
+    - Если расход привязан к товару → только этому товару.
+    - Если привязан к площадке (без товара) → распределяется между товарами
+      этой площадки пропорционально выручке.
+    - Без привязки → распределяется по всем товарам пропорционально выручке.
+    """
+    from app.models import AdvertisingExpense
+
+    # 1. Забираем все расходы за период
+    exp_stmt = select(AdvertisingExpense).where(
+        AdvertisingExpense.user_id == user_id,
+        AdvertisingExpense.date_from <= to_date.date(),
+        AdvertisingExpense.date_to >= from_date.date(),
+    )
+    expenses = list((await session.execute(exp_stmt)).scalars().all())
+
+    total_advertising = sum((Decimal(e.amount) for e in expenses), Decimal("0"))
+
+    result: AdvertisingDistribution = {
+        "total": total_advertising,
+        "by_product": {},
+        "by_marketplace": {},
+    }
+
+    if not expenses:
+        return result
+
+    # 2. Выручка по товарам и по площадкам за период (для распределения)
+    sales_stmt = (
+        select(
+            Sale.product_id,
+            Sale.marketplace_id,
+            func.coalesce(func.sum(Sale.price * Sale.quantity), 0).label("revenue"),
+        )
+        .where(
+            Sale.user_id == user_id,
+            Sale.sold_at >= from_date,
+            Sale.sold_at <= to_date,
+            Sale.product_id.isnot(None),
+        )
+        .group_by(Sale.product_id, Sale.marketplace_id)
+    )
+    rows = (await session.execute(sales_stmt)).all()
+
+    product_revenue: dict[int, Decimal] = {}
+    marketplace_revenue: dict[int, Decimal] = {}
+    for r in rows:
+        pid = r.product_id
+        mid = r.marketplace_id
+        rev = Decimal(r.revenue or 0)
+        if pid is not None:
+            product_revenue[pid] = product_revenue.get(pid, Decimal("0")) + rev
+        if mid is not None:
+            marketplace_revenue[mid] = marketplace_revenue.get(mid, Decimal("0")) + rev
+
+    total_revenue = sum(product_revenue.values(), Decimal("0"))
+
+    # 3. Распределяем каждый расход
+    for e in expenses:
+        amount = Decimal(e.amount)
+
+        if e.product_id is not None:
+            # На конкретный товар
+            result["by_product"][e.product_id] = (
+                result["by_product"].get(e.product_id, Decimal("0")) + amount
+            )
+            if e.marketplace_id is not None:
+                result["by_marketplace"][e.marketplace_id] = (
+                    result["by_marketplace"].get(e.marketplace_id, Decimal("0")) + amount
+                )
+
+        elif e.marketplace_id is not None:
+            # На площадку → распределяем по товарам этой площадки
+            result["by_marketplace"][e.marketplace_id] = (
+                result["by_marketplace"].get(e.marketplace_id, Decimal("0")) + amount
+            )
+            # Найти товары этой площадки
+            mp_revenue = Decimal("0")
+            mp_products: dict[int, Decimal] = {}
+            for r in rows:
+                if r.marketplace_id == e.marketplace_id and r.product_id is not None:
+                    rev = Decimal(r.revenue or 0)
+                    mp_products[r.product_id] = mp_products.get(r.product_id, Decimal("0")) + rev
+                    mp_revenue += rev
+
+            if mp_revenue > 0:
+                for pid, rev in mp_products.items():
+                    share = amount * rev / mp_revenue
+                    result["by_product"][pid] = result["by_product"].get(pid, Decimal("0")) + share
+
+        else:
+            # Без привязки → по всем товарам пропорционально выручке
+            if total_revenue > 0:
+                for pid, rev in product_revenue.items():
+                    share = amount * rev / total_revenue
+                    result["by_product"][pid] = result["by_product"].get(pid, Decimal("0")) + share
+            # И по площадкам — пропорционально выручке площадки
+            for mid, rev in marketplace_revenue.items():
+                share = amount * rev / total_revenue if total_revenue > 0 else Decimal("0")
+                result["by_marketplace"][mid] = (
+                    result["by_marketplace"].get(mid, Decimal("0")) + share
+                )
+
+    return result
 
 
 @router.get("/summary", response_model=AnalyticsSummary)
@@ -86,6 +213,16 @@ async def summary(
     logistics = Decimal(row.total_logistics)
     net_profit = revenue - commission - logistics
 
+    # Реклама / ДРР
+    adv = await _distribute_advertising_cost(session, current_user.id, from_date, to_date)
+    advertising_cost = adv["total"]
+    drr_percent = (
+        (advertising_cost / revenue * Decimal("100")).quantize(Decimal("0.01"))
+        if revenue > 0
+        else Decimal("0")
+    )
+    net_profit_with_ads = net_profit - advertising_cost
+
     return AnalyticsSummary(
         period_from=from_date,
         period_to=to_date,
@@ -94,6 +231,9 @@ async def summary(
         total_commission=commission,
         total_logistics=logistics,
         net_profit=net_profit,
+        advertising_cost=advertising_cost,
+        drr_percent=drr_percent,
+        net_profit_with_ads=net_profit_with_ads,
     )
 
 
@@ -214,6 +354,9 @@ async def unit_economics_all(
             total_cogs=Decimal("0"),
             total_tax=Decimal("0"),
             total_net_profit=Decimal("0"),
+            total_advertising_cost=Decimal("0"),
+            drr_percent=Decimal("0"),
+            total_net_profit_with_ads=Decimal("0"),
             products=[],
         )
 
@@ -234,6 +377,11 @@ async def unit_economics_all(
         if sale.product_id is None:
             continue
         groups[sale.product_id].append(sale)
+
+    # 4.5. Реклама / ДРР — распределение по товарам
+    adv = await _distribute_advertising_cost(session, current_user.id, from_date, to_date)
+    adv_by_product: dict[int, Decimal] = adv["by_product"]
+    total_advertising_cost = adv["total"]
 
     # 5. Считаем метрики по каждому товару
     items: list[UnitEconomicsProductItem] = []
@@ -290,6 +438,13 @@ async def unit_economics_all(
             (net_profit / quantity).quantize(Decimal("0.01")) if quantity > 0 else Decimal("0")
         )
 
+        # Реклама / ДРР для товара
+        adv_cost = adv_by_product.get(product.id, Decimal("0")).quantize(Decimal("0.01"))
+        drr_product = (
+            (adv_cost / net * Decimal("100")).quantize(Decimal("0.01")) if net > 0 else Decimal("0")
+        )
+        profit_with_ads = (net_profit - adv_cost).quantize(Decimal("0.01"))
+
         items.append(
             UnitEconomicsProductItem(
                 product_id=product.id,
@@ -307,10 +462,13 @@ async def unit_economics_all(
                 cogs=cogs,
                 tax_amount=tax,
                 net_profit=net_profit,
+                advertising_cost=adv_cost,
+                drr_percent=drr_product,
+                net_profit_with_ads=profit_with_ads,
                 margin_percent=margin,
                 roi_percent=roi,
                 profit_per_unit=per_unit,
-                is_loss=net_profit < 0,
+                is_loss=profit_with_ads < 0,
             )
         )
 
@@ -345,6 +503,13 @@ async def unit_economics_all(
         total_cogs=grand_cogs,
         total_tax=grand_tax,
         total_net_profit=grand_profit,
+        total_advertising_cost=total_advertising_cost.quantize(Decimal("0.01")),
+        drr_percent=(
+            (total_advertising_cost / grand_net * Decimal("100")).quantize(Decimal("0.01"))
+            if grand_net > 0
+            else Decimal("0")
+        ),
+        total_net_profit_with_ads=(grand_profit - total_advertising_cost).quantize(Decimal("0.01")),
         products=items,
     )
 
@@ -515,6 +680,9 @@ async def profit(
             total_tax=Decimal("0"),
             total_net_profit=Decimal("0"),
             margin_percent=Decimal("0"),
+            total_advertising_cost=Decimal("0"),
+            drr_percent=Decimal("0"),
+            total_net_profit_with_ads=Decimal("0"),
             by_marketplace=[],
         )
 
@@ -541,6 +709,11 @@ async def profit(
     mp_stmt = select(Marketplace).where(Marketplace.id.in_(marketplace_ids))
     marketplaces = (await session.execute(mp_stmt)).scalars().all()
     marketplace_map = {m.id: m for m in marketplaces}
+
+    # 5.5. Реклама / ДРР
+    adv = await _distribute_advertising_cost(session, current_user.id, from_date, to_date)
+    adv_by_marketplace: dict[int, Decimal] = adv["by_marketplace"]
+    total_advertising_cost = adv["total"]
 
     # 6. Считаем по каждой группе
     by_marketplace: list[ProfitByMarketplace] = []
@@ -576,6 +749,13 @@ async def profit(
             else Decimal("0")
         )
 
+        adv_cost = adv_by_marketplace.get(marketplace_id, Decimal("0")).quantize(Decimal("0.01"))
+        drr_mp = (
+            (adv_cost / revenue * Decimal("100")).quantize(Decimal("0.01"))
+            if revenue > 0
+            else Decimal("0")
+        )
+
         by_marketplace.append(
             ProfitByMarketplace(
                 marketplace_code=mp.code,
@@ -586,6 +766,9 @@ async def profit(
                 cogs=cogs,
                 tax_amount=tax,
                 net_profit=net_profit,
+                advertising_cost=adv_cost,
+                drr_percent=drr_mp,
+                net_profit_with_ads=(net_profit - adv_cost).quantize(Decimal("0.01")),
                 margin_percent=margin,
             )
         )
@@ -613,6 +796,13 @@ async def profit(
         total_cogs=grand_cogs,
         total_tax=grand_tax,
         total_net_profit=grand_profit,
+        total_advertising_cost=total_advertising_cost.quantize(Decimal("0.01")),
+        drr_percent=(
+            (total_advertising_cost / grand_revenue * Decimal("100")).quantize(Decimal("0.01"))
+            if grand_revenue > 0
+            else Decimal("0")
+        ),
+        total_net_profit_with_ads=(grand_profit - total_advertising_cost).quantize(Decimal("0.01")),
         margin_percent=total_margin,
         by_marketplace=by_marketplace,
     )
