@@ -17,6 +17,7 @@ from app.schemas import (
     WBSyncResult,
     WBSyncSalesResult,
 )
+from app.sync_service import trigger_sync_if_stale
 from app.wb_client import WBClient, WBClientError
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -275,7 +276,9 @@ async def sync_ozon_sales(
 
     try:
         async with OzonClient(account.client_id, api_key) as ozon:
-            postings = await ozon.list_postings_for_range(since=since_iso, to=to_iso)
+            postings_fbs = await ozon.list_postings_for_range(since=since_iso, to=to_iso)
+            postings_fbo = await ozon.list_fbo_postings_for_range(since=since_iso, to=to_iso)
+            postings = postings_fbs + postings_fbo
     except OzonClientError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -592,3 +595,16 @@ async def sync_wb_sales(
         period_from=from_date,
         period_to=to_date,
     )
+
+
+@router.post("/sync-if-stale")
+async def sync_if_stale(
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, list[str]]:
+    """
+    Проверяет last_sync_at для всех аккаунтов пользователя.
+    Для устаревших — запускает sync в фоне (не блокирует ответ).
+    Возвращает: {"triggered": [...], "skipped": [...]}
+    """
+    return await trigger_sync_if_stale(current_user.id, session)

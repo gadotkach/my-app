@@ -11,3 +11,7 @@ venv/
 .env.backup
 # VS Code settings (личные настройки редактора)
 .vscode/
+
+# Backups
+*.bak
+*.bak2

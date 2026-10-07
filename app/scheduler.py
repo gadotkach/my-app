@@ -69,9 +69,24 @@ async def sync_ozon_for_account(
     since = to - timedelta(days=7)
     try:
         async with OzonClient(client_id, api_key) as ozon:
-            postings = await ozon.list_postings_for_range(
-                since=since.isoformat().replace("+00:00", "Z"),
-                to=to.isoformat().replace("+00:00", "Z"),
+            since_iso = since.isoformat().replace("+00:00", "Z")
+            to_iso = to.isoformat().replace("+00:00", "Z")
+            # FBS
+            postings_fbs = await ozon.list_postings_for_range(
+                since=since_iso,
+                to=to_iso,
+            )
+            # FBO
+            postings_fbo = await ozon.list_fbo_postings_for_range(
+                since=since_iso,
+                to=to_iso,
+            )
+            postings = postings_fbs + postings_fbo
+            logger.info(
+                "Ozon sync: FBS=%d, FBO=%d, total=%d",
+                len(postings_fbs),
+                len(postings_fbo),
+                len(postings),
             )
     except OzonClientError as e:
         logger.warning("Ozon sales sync failed for user %s: %s", user_id, e)
@@ -163,6 +178,14 @@ async def sync_ozon_all_accounts() -> None:
                 api_key=api_key,
                 marketplace_id=account.marketplace_id,
             )
+            # Обновляем last_sync_at
+            async with AsyncSessionLocal() as s:
+                acc = await s.scalar(
+                    select(MarketplaceAccount).where(MarketplaceAccount.id == account.id)
+                )
+                if acc is not None:
+                    acc.last_sync_at = datetime.now(UTC)
+                    await s.commit()
             logger.info("Synced Ozon account user_id=%s: %s", account.user_id, stats)
             for k in total:
                 total[k] += stats[k]
@@ -386,6 +409,14 @@ async def sync_wb_all_accounts() -> None:
                 api_key=api_key,
                 marketplace_id=account.marketplace_id,
             )
+            # Обновляем last_sync_at
+            async with AsyncSessionLocal() as s:
+                acc = await s.scalar(
+                    select(MarketplaceAccount).where(MarketplaceAccount.id == account.id)
+                )
+                if acc is not None:
+                    acc.last_sync_at = datetime.now(UTC)
+                    await s.commit()
             logger.info("Synced WB account user_id=%s: %s", account.user_id, stats)
             for k in total:
                 total[k] += stats[k]

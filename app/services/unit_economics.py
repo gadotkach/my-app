@@ -107,6 +107,7 @@ def calculate_unit_economics(
     sale: Sale,
     product: Product | None,
     tax_settings: TaxSettings | None,
+    contributions_per_sale: Decimal = ZERO,
 ) -> UnitEconomics:
     """
     Рассчитать юнит-экономику одной продажи.
@@ -155,7 +156,7 @@ def calculate_unit_economics(
             tax_rate=Decimal(tax_settings.tax_rate),
             revenue=revenue,
             expenses=expenses,
-            insurance_contributions=Decimal(tax_settings.insurance_contributions),
+            insurance_contributions=contributions_per_sale,
             vat_enabled=tax_settings.vat_enabled,
             vat_rate=Decimal(tax_settings.vat_rate),
         )

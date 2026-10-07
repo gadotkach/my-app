@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_session, require_active_subscription
 from app.models import Product, User
-from app.schemas import ProductCreate, ProductRead
+from app.schemas import ProductCreate, ProductRead, ProductUpdate
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -42,4 +42,28 @@ async def get_product(
     product = await session.get(Product, product_id)
     if product is None or product.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    return product
+
+
+@router.patch("/{product_id}", response_model=ProductRead)
+async def patch_product(
+    product_id: int,
+    payload: ProductUpdate,
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> Product:
+    """Частичное обновление товара. Обновляются только переданные поля."""
+    product = await session.get(Product, product_id)
+    if product is None or product.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        return product
+
+    for field, value in update_data.items():
+        setattr(product, field, value)
+
+    await session.commit()
+    await session.refresh(product)
     return product

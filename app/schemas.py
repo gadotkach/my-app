@@ -46,6 +46,19 @@ class ProductCreate(BaseModel):
     height_cm: Decimal | None = None
 
 
+class ProductUpdate(BaseModel):
+    """Частичное обновление товара. Все поля optional."""
+
+    sku: str | None = None
+    name: str | None = None
+    description: str | None = None
+    cost_price: Decimal | None = None
+    volume_liters: Decimal | None = None
+    length_cm: Decimal | None = None
+    width_cm: Decimal | None = None
+    height_cm: Decimal | None = None
+
+
 class ProductRead(BaseModel):
     id: int
     sku: str
@@ -247,6 +260,64 @@ class UnitEconomicsResponse(BaseModel):
     profit_per_unit: Decimal
 
     warning: str | None = None
+
+
+class UnitEconomicsProductItem(BaseModel):
+    """Одна строка в таблице юнит-экономики."""
+
+    product_id: int
+    product_name: str
+    sku: str
+    sales_count: int
+    quantity: int
+
+    # Выручка
+    gross_revenue: Decimal
+    net_revenue: Decimal
+
+    # Расходы
+    commission: Decimal
+    logistics: Decimal
+    acquiring: Decimal
+    storage: Decimal
+    marketplace_costs_total: Decimal
+
+    # Себестоимость, налог, прибыль
+    cogs: Decimal
+    tax_amount: Decimal
+    net_profit: Decimal
+
+    # Метрики
+    margin_percent: Decimal
+    roi_percent: Decimal
+    profit_per_unit: Decimal
+
+    # Флаг убыточности (для UI)
+    is_loss: bool
+
+
+class UnitEconomicsAllResponse(BaseModel):
+    """Таблица юнит-экономики по всем товарам за период."""
+
+    period_from: datetime
+    period_to: datetime
+
+    # Итоги
+    total_sales_count: int
+    total_quantity: int
+    total_gross_revenue: Decimal
+    total_net_revenue: Decimal
+    total_commission: Decimal
+    total_logistics: Decimal
+    total_acquiring: Decimal
+    total_storage: Decimal
+    total_marketplace_costs: Decimal
+    total_cogs: Decimal
+    total_tax: Decimal
+    total_net_profit: Decimal
+
+    # Список товаров, отсортированный по прибыли (убывание)
+    products: list[UnitEconomicsProductItem]
 
 
 class ProfitByMarketplace(BaseModel):

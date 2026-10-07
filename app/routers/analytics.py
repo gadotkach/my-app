@@ -19,6 +19,8 @@ from app.schemas import (
     ProductStats,
     ProfitByMarketplace,
     ProfitSummaryResponse,
+    UnitEconomicsAllResponse,
+    UnitEconomicsProductItem,
     UnitEconomicsResponse,
 )
 from app.services.unit_economics import (
@@ -26,6 +28,37 @@ from app.services.unit_economics import (
     calculate_recommended_price,
     calculate_unit_economics,
 )
+
+
+def _prorated_contributions_per_sale(
+    tax_settings: "TaxSettings | None",
+    num_sales: int,
+    period_days: int,
+) -> Decimal:
+    """
+    Считает долю пропорциональных страховых взносов, приходящуюся на одну продажу.
+
+    Логика:
+    - Взносы применяются только для УСН «Доходы» (USN_INCOME).
+    - Годовая сумма взносов распределяется по периоду: insurance * period_days / 365.
+    - Затем делится на количество продаж, чтобы при суммировании по периоду
+      получить ровно правильную сумму.
+
+    Для НПД / УСН Д-Р / ПСН — возвращает 0.
+    """
+    from decimal import Decimal as _D
+
+    if tax_settings is None:
+        return _D("0")
+    if getattr(tax_settings, "tax_system", None) != "USN_INCOME":
+        return _D("0")
+    if num_sales <= 0:
+        return _D("0")
+
+    insurance = _D(str(tax_settings.insurance_contributions or 0))
+    prorated = insurance * _D(str(period_days)) / _D("365")
+    return (prorated / _D(str(num_sales))).quantize(_D("0.01"))
+
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -144,6 +177,178 @@ async def by_product(
     ]
 
 
+@router.get("/unit-economics/all", response_model=UnitEconomicsAllResponse)
+async def unit_economics_all(
+    from_date: datetime = Query(..., alias="from"),
+    to_date: datetime = Query(..., alias="to"),
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> UnitEconomicsAllResponse:
+    """
+    Юнит-экономика по всем товарам пользователя за период.
+    Возвращает таблицу: товар + метрики + флаг убыточности.
+    Используется на странице /unit-economics.
+    """
+    # 1. Все продажи за период с привязкой к товару
+    sales_stmt = select(Sale).where(
+        Sale.user_id == current_user.id,
+        Sale.sold_at >= from_date,
+        Sale.sold_at <= to_date,
+        Sale.product_id.isnot(None),
+    )
+    sales = list((await session.execute(sales_stmt)).scalars().all())
+
+    if not sales:
+        return UnitEconomicsAllResponse(
+            period_from=from_date,
+            period_to=to_date,
+            total_sales_count=0,
+            total_quantity=0,
+            total_gross_revenue=Decimal("0"),
+            total_net_revenue=Decimal("0"),
+            total_commission=Decimal("0"),
+            total_logistics=Decimal("0"),
+            total_acquiring=Decimal("0"),
+            total_storage=Decimal("0"),
+            total_marketplace_costs=Decimal("0"),
+            total_cogs=Decimal("0"),
+            total_tax=Decimal("0"),
+            total_net_profit=Decimal("0"),
+            products=[],
+        )
+
+    # 2. Все товары — одним запросом
+    product_ids = {sale.product_id for sale in sales if sale.product_id is not None}
+    products_stmt = select(Product).where(Product.id.in_(product_ids))
+    products = (await session.execute(products_stmt)).scalars().all()
+    products_map = {p.id: p for p in products}
+
+    # 3. Налоговые настройки
+    tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
+    tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+    period_days = max(1, (to_date - from_date).days)
+
+    # 4. Группируем продажи по product_id
+    groups: dict[int, list[Sale]] = defaultdict(list)
+    for sale in sales:
+        if sale.product_id is None:
+            continue
+        groups[sale.product_id].append(sale)
+
+    # 5. Считаем метрики по каждому товару
+    items: list[UnitEconomicsProductItem] = []
+
+    grand_sales_count = 0
+    grand_quantity = 0
+    grand_gross = Decimal("0")
+    grand_net = Decimal("0")
+    grand_commission = Decimal("0")
+    grand_logistics = Decimal("0")
+    grand_acquiring = Decimal("0")
+    grand_storage = Decimal("0")
+    grand_costs = Decimal("0")
+    grand_cogs = Decimal("0")
+    grand_tax = Decimal("0")
+    grand_profit = Decimal("0")
+
+    for product_id, product_sales in groups.items():
+        product = products_map.get(product_id)
+        if product is None:
+            continue
+
+        contributions_per_sale = _prorated_contributions_per_sale(
+            tax_settings, len(product_sales), period_days
+        )
+        results = [
+            calculate_unit_economics(s, product, tax_settings, contributions_per_sale)
+            for s in product_sales
+        ]
+
+        gross = sum((r.gross_price * r.quantity for r in results), Decimal("0"))
+        net = sum((r.net_price * r.quantity for r in results), Decimal("0"))
+        commission = sum((r.commission * r.quantity for r in results), Decimal("0"))
+        logistics = sum((r.logistics * r.quantity for r in results), Decimal("0"))
+        acquiring = sum((r.acquiring * r.quantity for r in results), Decimal("0"))
+        storage = sum((r.storage * r.quantity for r in results), Decimal("0"))
+        costs = sum((r.marketplace_costs_total * r.quantity for r in results), Decimal("0"))
+        cogs = sum((r.cogs for r in results), Decimal("0"))
+        tax = sum((r.tax_amount for r in results), Decimal("0"))
+        net_profit = sum((r.net_profit for r in results), Decimal("0"))
+        quantity = sum((r.quantity for r in results), 0)
+
+        margin = (
+            (net_profit / net * Decimal("100")).quantize(Decimal("0.01"))
+            if net > 0
+            else Decimal("0")
+        )
+        roi = (
+            (net_profit / cogs * Decimal("100")).quantize(Decimal("0.01"))
+            if cogs > 0
+            else Decimal("0")
+        )
+        per_unit = (
+            (net_profit / quantity).quantize(Decimal("0.01")) if quantity > 0 else Decimal("0")
+        )
+
+        items.append(
+            UnitEconomicsProductItem(
+                product_id=product.id,
+                product_name=product.name,
+                sku=product.sku,
+                sales_count=len(product_sales),
+                quantity=quantity,
+                gross_revenue=gross,
+                net_revenue=net,
+                commission=commission,
+                logistics=logistics,
+                acquiring=acquiring,
+                storage=storage,
+                marketplace_costs_total=costs,
+                cogs=cogs,
+                tax_amount=tax,
+                net_profit=net_profit,
+                margin_percent=margin,
+                roi_percent=roi,
+                profit_per_unit=per_unit,
+                is_loss=net_profit < 0,
+            )
+        )
+
+        grand_sales_count += len(product_sales)
+        grand_quantity += quantity
+        grand_gross += gross
+        grand_net += net
+        grand_commission += commission
+        grand_logistics += logistics
+        grand_acquiring += acquiring
+        grand_storage += storage
+        grand_costs += costs
+        grand_cogs += cogs
+        grand_tax += tax
+        grand_profit += net_profit
+
+    # Сортируем по прибыли (убывание)
+    items.sort(key=lambda x: x.net_profit, reverse=True)
+
+    return UnitEconomicsAllResponse(
+        period_from=from_date,
+        period_to=to_date,
+        total_sales_count=grand_sales_count,
+        total_quantity=grand_quantity,
+        total_gross_revenue=grand_gross,
+        total_net_revenue=grand_net,
+        total_commission=grand_commission,
+        total_logistics=grand_logistics,
+        total_acquiring=grand_acquiring,
+        total_storage=grand_storage,
+        total_marketplace_costs=grand_costs,
+        total_cogs=grand_cogs,
+        total_tax=grand_tax,
+        total_net_profit=grand_profit,
+        products=items,
+    )
+
+
 @router.get("/unit-economics", response_model=UnitEconomicsResponse)
 async def unit_economics(
     product_id: int = Query(..., description="ID товара"),
@@ -168,6 +373,7 @@ async def unit_economics(
     # 2. Берём налоговые настройки
     tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
     tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+    period_days = max(1, (to_date - from_date).days)
 
     # 3. Берём все продажи товара за период
     sales_stmt = select(Sale).where(
@@ -209,7 +415,11 @@ async def unit_economics(
         )
 
     # 4. Считаем юнит-экономику для каждой продажи
-    results = [calculate_unit_economics(sale, product, tax_settings) for sale in sales]
+    contributions_per_sale = _prorated_contributions_per_sale(tax_settings, len(sales), period_days)
+    results = [
+        calculate_unit_economics(sale, product, tax_settings, contributions_per_sale)
+        for sale in sales
+    ]
 
     # 5. Суммируем
     total_gross = sum((r.gross_price * r.quantity for r in results), Decimal("0"))
@@ -319,6 +529,7 @@ async def profit(
     # 3. Налоговые настройки
     tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
     tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+    period_days = max(1, (to_date - from_date).days)
 
     # 4. Группируем продажи по marketplace_id
     groups: dict[int, list[Sale]] = defaultdict(list)
@@ -343,8 +554,13 @@ async def profit(
         mp = marketplace_map[marketplace_id]
 
         # Считаем юнит-экономику для каждой продажи площадки
+        contributions_per_sale = _prorated_contributions_per_sale(
+            tax_settings, len(marketplace_sales), period_days
+        )
         results = [
-            calculate_unit_economics(sale, products_map.get(sale.product_id or 0), tax_settings)
+            calculate_unit_economics(
+                sale, products_map.get(sale.product_id or 0), tax_settings, contributions_per_sale
+            )
             for sale in marketplace_sales
         ]
 
@@ -436,6 +652,7 @@ async def abc_analysis(
     # 3. Налоговые настройки
     tax_stmt = select(TaxSettings).where(TaxSettings.user_id == current_user.id)
     tax_settings = (await session.execute(tax_stmt)).scalar_one_or_none()
+    period_days = max(1, (to_date - from_date).days)
 
     # 4. Группируем по product_id
     product_stats: dict[int, dict[str, Decimal | int]] = defaultdict(
@@ -446,7 +663,10 @@ async def abc_analysis(
         product = products_map.get(sale.product_id or 0)
         if product is None:
             continue
-        r = calculate_unit_economics(sale, product, tax_settings)
+        contributions_per_sale = _prorated_contributions_per_sale(
+            tax_settings, len(sales), period_days
+        )
+        r = calculate_unit_economics(sale, product, tax_settings, contributions_per_sale)
         pid = product.id
         product_stats[pid]["revenue"] += r.net_price * r.quantity
         product_stats[pid]["net_profit"] += r.net_profit
