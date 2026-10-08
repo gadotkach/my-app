@@ -274,9 +274,7 @@ async def test_wb_sync_products_updates(client, monkeypatch):
 
 async def test_wb_sync_sales_requires_auth(client):
     """Без токена → 401."""
-    response = await client.post(
-        "/integrations/wb/sync/sales?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z"
-    )
+    response = await client.post("/integrations/wb/sync/sales?from=2026-01-01&to=2026-12-31")
     assert response.status_code == 401
 
 
@@ -284,7 +282,7 @@ async def test_wb_sync_sales_not_connected(client):
     """WB не подключён → 404."""
     token = await _register_and_login(client)
     response = await client.post(
-        "/integrations/wb/sync/sales?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z",
+        "/integrations/wb/sync/sales?from=2026-01-01&to=2026-12-31",
         headers=_auth(token),
     )
     assert response.status_code == 404
@@ -297,11 +295,16 @@ async def test_wb_sync_sales_empty(client, monkeypatch):
     async def fake_ping(self) -> bool:
         return True
 
-    async def fake_sales_report(self, date_from, date_to) -> list[dict[str, Any]]:
+    async def fake_sales_report(
+        self, date_from, date_to, period="daily", limit=100_000, rrd_id=0, fields=None
+    ) -> list[dict[str, Any]]:
         return []
 
     monkeypatch.setattr("app.routers.integrations.WBClient.ping", fake_ping)
-    monkeypatch.setattr("app.routers.integrations.WBClient.list_sales_report", fake_sales_report)
+    monkeypatch.setattr(
+        "app.routers.integrations.WBClient.get_sales_report_detailed_by_period",
+        fake_sales_report,
+    )
 
     await client.post(
         "/integrations/wb/connect",
@@ -310,7 +313,7 @@ async def test_wb_sync_sales_empty(client, monkeypatch):
     )
 
     response = await client.post(
-        "/integrations/wb/sync/sales?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z",
+        "/integrations/wb/sync/sales?from=2026-01-01&to=2026-12-31",
         headers=_auth(token),
     )
     assert response.status_code == 200
@@ -337,39 +340,56 @@ async def test_wb_sync_sales_creates(client, monkeypatch):
             },
         ]
 
-    async def fake_sales_report(self, date_from, date_to) -> list[dict[str, Any]]:
+    async def fake_sales_report(
+        self, date_from, date_to, period="daily", limit=100_000, rrd_id=0, fields=None
+    ) -> list[dict[str, Any]]:
         return [
             {
+                "rrdId": 1,
                 "srid": "unique-srid-1",
-                "nm_id": 111111,
-                "ppvz_for_pay": "850.00",
-                "ppvz_sales_commission": "150.00",
-                "acquiring_fee": "15.00",
-                "delivery_rub": "91.00",
-                "storage_fee": "5.00",
-                "retail_price_withdisc_rub": "1200.00",
-                "ppvz_spp_prc": "5.00",
-                "ppvz_vw": 1,
-                "sale_dt": "2026-09-15T10:00:00Z",
+                "nmId": 111111,
+                "docTypeName": "Продажа",
+                "quantity": 1,
+                "retailAmount": "1200.00",
+                "retailPriceWithDisc": "1140.00",
+                "commissionPercent": 12.5,
+                "ppvzSalesCommission": "150.00",
+                "acquiringFee": "15.00",
+                "acquiringPercent": 1.25,
+                "deliveryService": "91.00",
+                "deliveryAmount": "0.00",
+                "paidStorage": "5.00",
+                "spp": "5.00",
+                "forPay": "850.00",
+                "saleDt": "2026-09-15T10:00:00Z",
             },
             {
+                "rrdId": 2,
                 "srid": "unique-srid-2",
-                "nm_id": 111111,
-                "ppvz_for_pay": "1700.00",
-                "ppvz_sales_commission": "300.00",
-                "acquiring_fee": "30.00",
-                "delivery_rub": "91.00",
-                "storage_fee": "0.00",
-                "retail_price_withdisc_rub": "2000.00",
-                "ppvz_spp_prc": "3.00",
-                "ppvz_vw": 2,
-                "sale_dt": "2026-09-16T10:00:00Z",
+                "nmId": 111111,
+                "docTypeName": "Продажа",
+                "quantity": 2,
+                "retailAmount": "2000.00",
+                "retailPriceWithDisc": "1940.00",
+                "commissionPercent": 15.0,
+                "ppvzSalesCommission": "300.00",
+                "acquiringFee": "30.00",
+                "acquiringPercent": 1.5,
+                "deliveryService": "91.00",
+                "deliveryAmount": "0.00",
+                "paidStorage": "0.00",
+                "spp": "3.00",
+                "forPay": "1700.00",
+                "saleDt": "2026-09-16T10:00:00Z",
             },
         ]
 
     monkeypatch.setattr("app.routers.integrations.WBClient.ping", fake_ping)
     monkeypatch.setattr("app.routers.integrations.WBClient.list_products", fake_list_products)
-    monkeypatch.setattr("app.routers.integrations.WBClient.list_sales_report", fake_sales_report)
+    monkeypatch.setattr(
+        "app.routers.integrations.WBClient.get_sales_report_detailed_by_period",
+        fake_sales_report,
+    )
 
     # Подключаем WB и синхронизируем товары (для маппинга nm_id → Product)
     await client.post(
@@ -384,7 +404,7 @@ async def test_wb_sync_sales_creates(client, monkeypatch):
 
     # Синхронизируем продажи
     response = await client.post(
-        "/integrations/wb/sync/sales?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z",
+        "/integrations/wb/sync/sales?from=2026-01-01&to=2026-12-31",
         headers=_auth(token),
     )
     assert response.status_code == 200
