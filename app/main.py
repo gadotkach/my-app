@@ -16,6 +16,7 @@ from app.routers import (
     delivery_services,
     integrations,
     marketplaces,
+    notifications,
     ozon_ads,
     products,
     sales,
@@ -67,6 +68,7 @@ app.include_router(integrations.router)
 app.include_router(tax_settings.router)
 app.include_router(advertising.router)
 app.include_router(ozon_ads.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health")

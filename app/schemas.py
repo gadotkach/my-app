@@ -542,3 +542,49 @@ class OzonAdsSyncResult(BaseModel):
     period_from: date
     period_to: date
     skipped: bool
+
+
+# ============================================================
+# Telegram-уведомления
+# ============================================================
+
+
+class TelegramConnect(BaseModel):
+    """Подключение Telegram: chat_id + username."""
+
+    chat_id: str
+    telegram_username: str | None = None
+
+
+class TelegramSubscriptionRead(BaseModel):
+    """Статус подписки на Telegram-уведомления."""
+
+    id: int
+    chat_id: str
+    telegram_username: str | None
+    notify_new_sales: bool
+    notify_loss_making: bool
+    notify_daily_report: bool
+    notify_drr_high: bool
+    drr_threshold: Decimal
+    connected_at: datetime
+    last_notification_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TelegramSettingsUpdate(BaseModel):
+    """Обновление настроек уведомлений."""
+
+    notify_new_sales: bool | None = None
+    notify_loss_making: bool | None = None
+    notify_daily_report: bool | None = None
+    notify_drr_high: bool | None = None
+    drr_threshold: Decimal | None = None
+
+
+class TelegramTestResult(BaseModel):
+    """Результат тестового сообщения."""
+
+    sent: bool
+    detail: str | None = None
