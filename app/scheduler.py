@@ -14,6 +14,8 @@ from app.models import (
     OzonAdsAccount,
     Product,
     Sale,
+    TaxSettings,
+    TelegramSubscription,
 )
 from app.ozon_ads_client import OzonAdsClientError
 from app.ozon_client import OzonClient, OzonClientError
@@ -564,6 +566,239 @@ async def sync_ozon_ads_all_accounts() -> None:
     )
 
 
+async def check_loss_making_products() -> None:
+    """Раз в 6 часов: обходит подписчиков, проверяет убыточные товары за 7 дней.
+
+    Отправляет уведомления через notify_loss_making для товаров с net_profit < 0.
+    Учитывает notify_loss_making в TelegramSubscription.
+    """
+    from collections import defaultdict
+
+    from app.services.telegram_notifier import notify_loss_making
+    from app.services.unit_economics import calculate_unit_economics
+
+    logger.info("Starting loss-making check")
+
+    async with AsyncSessionLocal() as session:
+        subs = (
+            (
+                await session.execute(
+                    select(TelegramSubscription).where(
+                        TelegramSubscription.notify_loss_making.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    if not subs:
+        logger.info("No subscribers for loss-making notifications")
+        return
+
+    now = datetime.now(UTC)
+    since = now - timedelta(days=7)
+
+    sent = 0
+    for sub in subs:
+        try:
+            async with AsyncSessionLocal() as session:
+                # Продажи за 7 дней
+                sales = list(
+                    (
+                        await session.execute(
+                            select(Sale).where(
+                                Sale.user_id == sub.user_id,
+                                Sale.sold_at >= since,
+                                Sale.sold_at <= now,
+                                Sale.product_id.isnot(None),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not sales:
+                    continue
+
+                # Товары
+                product_ids = {s.product_id for s in sales if s.product_id}
+                products = (
+                    (await session.execute(select(Product).where(Product.id.in_(product_ids))))
+                    .scalars()
+                    .all()
+                )
+                products_map = {p.id: p for p in products}
+
+                # Налоги
+                tax_settings = (
+                    await session.execute(
+                        select(TaxSettings).where(TaxSettings.user_id == sub.user_id)
+                    )
+                ).scalar_one_or_none()
+
+                # Группируем по product_id
+                groups: dict[int, list[Sale]] = defaultdict(list)
+                for s in sales:
+                    if s.product_id:
+                        groups[s.product_id].append(s)
+
+                for product_id, product_sales in groups.items():
+                    product = products_map.get(product_id)
+                    if product is None:
+                        continue
+
+                    # Доля взносов на одну продажу
+                    contrib_per_sale = (
+                        (tax_settings.insurance_contributions / len(product_sales))
+                        if tax_settings and tax_settings.insurance_contributions
+                        else Decimal("0")
+                    )
+
+                    # Сумма net_profit за период
+                    total_net = Decimal("0")
+                    for s in product_sales:
+                        ue = calculate_unit_economics(
+                            sale=s,
+                            product=product,
+                            tax_settings=tax_settings,
+                            contributions_per_sale=contrib_per_sale,
+                        )
+                        total_net += ue.net_profit
+
+                    if total_net < 0:
+                        try:
+                            await notify_loss_making(
+                                chat_id=sub.chat_id,
+                                product_name=product.name or product.sku,
+                                loss=float(abs(total_net)),
+                            )
+                            sent += 1
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to send loss notification to %s: %s",
+                                sub.chat_id,
+                                e,
+                            )
+
+        except Exception:
+            logger.exception("Loss check failed for user_id=%s", sub.user_id)
+
+    # Обновляем last_notification_at у всех, кому отправили
+    if sent:
+        async with AsyncSessionLocal() as session:
+            for sub in subs:
+                tg = await session.get(TelegramSubscription, sub.id)
+                if tg is not None:
+                    tg.last_notification_at = datetime.now(UTC)
+            await session.commit()
+
+    logger.info("Loss-making check done: %s notifications sent", sent)
+
+
+async def send_daily_reports() -> None:
+    """Раз в день в 9:00 МСК: ежедневный отчёт по выручке/прибыли/ДРР.
+
+    Отправляет через notify_daily_report для подписчиков с notify_daily_report=True.
+    """
+    from app.services.telegram_notifier import notify_daily_report
+    from app.services.unit_economics import calculate_unit_economics
+
+    logger.info("Starting daily reports")
+
+    async with AsyncSessionLocal() as session:
+        subs = (
+            (
+                await session.execute(
+                    select(TelegramSubscription).where(
+                        TelegramSubscription.notify_daily_report.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    if not subs:
+        logger.info("No subscribers for daily reports")
+        return
+
+    now = datetime.now(UTC)
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_end = yesterday_start + timedelta(days=1)
+
+    sent = 0
+    for sub in subs:
+        try:
+            async with AsyncSessionLocal() as session:
+                sales = list(
+                    (
+                        await session.execute(
+                            select(Sale).where(
+                                Sale.user_id == sub.user_id,
+                                Sale.sold_at >= yesterday_start,
+                                Sale.sold_at < yesterday_end,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                if not sales:
+                    continue
+
+                product_ids = {s.product_id for s in sales if s.product_id}
+                products_map = {}
+                if product_ids:
+                    prods = (
+                        (await session.execute(select(Product).where(Product.id.in_(product_ids))))
+                        .scalars()
+                        .all()
+                    )
+                    products_map = {p.id: p for p in prods}
+
+                tax_settings = (
+                    await session.execute(
+                        select(TaxSettings).where(TaxSettings.user_id == sub.user_id)
+                    )
+                ).scalar_one_or_none()
+
+                revenue = Decimal("0")
+                profit = Decimal("0")
+                orders = len(sales)
+
+                for s in sales:
+                    product = products_map.get(s.product_id) if s.product_id else None
+                    ue = calculate_unit_economics(
+                        sale=s,
+                        product=product,
+                        tax_settings=tax_settings,
+                    )
+                    revenue += ue.net_price
+                    profit += ue.net_profit
+
+                drr = 0.0  # упрощённо, без рекламы
+
+                try:
+                    await notify_daily_report(
+                        chat_id=sub.chat_id,
+                        summary={
+                            "revenue": float(revenue),
+                            "profit": float(profit),
+                            "drr": drr,
+                            "orders": orders,
+                        },
+                    )
+                    sent += 1
+                except Exception as e:
+                    logger.warning("Failed to send daily report to %s: %s", sub.chat_id, e)
+        except Exception:
+            logger.exception("Daily report failed for user_id=%s", sub.user_id)
+
+    logger.info("Daily reports done: %s sent", sent)
+
+
 def start_scheduler() -> None:
     """
     Запускает два job'а:
@@ -591,8 +826,26 @@ def start_scheduler() -> None:
         id="sync_ozon_ads_all_accounts",
         replace_existing=True,
     )
+    scheduler.add_job(
+        check_loss_making_products,
+        "interval",
+        hours=6,  # раз в 6 часов
+        id="check_loss_making_products",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_daily_reports,
+        "cron",
+        hour=6,  # 9:00 МСК = 6:00 UTC
+        minute=0,
+        id="send_daily_reports",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("Scheduler started: Ozon every 30 min, WB every 180 min, " "Ozon Ads every 6 hours")
+    logger.info(
+        "Scheduler started: Ozon 30min, WB 180min, Ozon Ads 6h, "
+        "Loss check 6h, Daily reports 6:00 UTC"
+    )
 
 
 def stop_scheduler() -> None:
