@@ -281,3 +281,41 @@ class OzonAdsAccount(Base):
     )
 
     user: Mapped["User"] = relationship()
+
+
+class TelegramSubscription(Base):
+    """
+    Подписка пользователя на Telegram-уведомления.
+
+    Хранит chat_id пользователя в Telegram и настройки уведомлений.
+    Один User — одна подписка (one-to-one).
+    """
+
+    __tablename__ = "telegram_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        unique=True,
+    )
+    chat_id: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Что уведомлять
+    notify_new_sales: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_loss_making: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_daily_report: Mapped[bool] = mapped_column(Boolean, default=False)
+    notify_drr_high: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Порог ДРР в %
+    drr_threshold: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("50.0"))
+
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_notification_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped["User"] = relationship()
