@@ -509,3 +509,36 @@ class AdvertisingSummaryResponse(BaseModel):
     # Разбивки
     by_source: list[AdvertisingBySource]
     by_marketplace: list[AdvertisingByMarketplace]
+
+
+# ============================================================
+# Ozon Ads (Performance API)
+# ============================================================
+
+
+class OzonAdsConnect(BaseModel):
+    """Тело запроса для подключения Ozon Ads."""
+
+    client_id: str
+    client_secret: str
+
+
+class OzonAdsAccountRead(BaseModel):
+    """Информация о подключённом Ozon Ads-аккаунте."""
+
+    id: int
+    client_id: str
+    last_sync_at: datetime | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OzonAdsSyncResult(BaseModel):
+    """Результат синхронизации расходов Ozon Ads."""
+
+    created: int
+    updated: int
+    period_from: date
+    period_to: date
+    skipped: bool

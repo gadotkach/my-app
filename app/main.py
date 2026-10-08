@@ -16,6 +16,7 @@ from app.routers import (
     delivery_services,
     integrations,
     marketplaces,
+    ozon_ads,
     products,
     sales,
     # subscriptions,  # временно отключено: FastAPI Cloud не устанавливает yookassa
@@ -65,6 +66,7 @@ app.include_router(analytics.router)
 app.include_router(integrations.router)
 app.include_router(tax_settings.router)
 app.include_router(advertising.router)
+app.include_router(ozon_ads.router)
 
 
 @app.get("/health")
