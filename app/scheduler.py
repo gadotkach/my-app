@@ -8,8 +8,16 @@ from sqlalchemy import select
 
 from app.crypto import decrypt
 from app.database import AsyncSessionLocal
-from app.models import Marketplace, MarketplaceAccount, Product, Sale
+from app.models import (
+    Marketplace,
+    MarketplaceAccount,
+    OzonAdsAccount,
+    Product,
+    Sale,
+)
+from app.ozon_ads_client import OzonAdsClientError
 from app.ozon_client import OzonClient, OzonClientError
+from app.services.ozon_ads_sync import sync_ozon_ads
 from app.wb_client import WBClient, WBClientError
 
 logger = logging.getLogger(__name__)
@@ -491,6 +499,71 @@ async def sync_wb_all_accounts() -> None:
 # ============================================================
 
 
+# ============================================================
+# Ozon Ads (Performance API)
+# ============================================================
+
+
+async def sync_ozon_ads_all_accounts() -> None:
+    """Задача планировщика: обходит все Ozon Ads-аккаунты. Запускается раз в 6 часов."""
+    logger.info("Starting scheduled Ozon Ads sync")
+
+    async with AsyncSessionLocal() as session:
+        stmt = select(OzonAdsAccount)
+        accounts = (await session.execute(stmt)).scalars().all()
+
+    total_created = 0
+    total_updated = 0
+
+    for account in accounts:
+        try:
+            client_secret = decrypt(account.client_secret_encrypted)
+            to_date = datetime.now(UTC).date()
+            from_date = to_date - timedelta(days=7)
+
+            stats = await sync_ozon_ads(
+                user_id=account.user_id,
+                client_id=account.client_id,
+                client_secret=client_secret,
+                date_from=from_date,
+                date_to=to_date,
+            )
+
+            # Обновить last_sync_at
+            async with AsyncSessionLocal() as session:
+                acc = await session.get(OzonAdsAccount, account.id)
+                if acc is not None:
+                    acc.last_sync_at = datetime.now(UTC)
+                    await session.commit()
+
+            logger.info(
+                "Synced Ozon Ads account user_id=%s: %s",
+                account.user_id,
+                stats,
+            )
+            total_created += stats.get("created", 0)
+            total_updated += stats.get("updated", 0)
+
+        except OzonAdsClientError as e:
+            logger.warning(
+                "Ozon Ads sync failed for user_id=%s: %s",
+                account.user_id,
+                e,
+            )
+        except Exception as e:
+            logger.exception(
+                "Ozon Ads sync unexpected error for user_id=%s: %s",
+                account.user_id,
+                e,
+            )
+
+    logger.info(
+        "Scheduled Ozon Ads sync done: created=%s, updated=%s",
+        total_created,
+        total_updated,
+    )
+
+
 def start_scheduler() -> None:
     """
     Запускает два job'а:
@@ -511,8 +584,15 @@ def start_scheduler() -> None:
         id="sync_wb_all_accounts",
         replace_existing=True,
     )
+    scheduler.add_job(
+        sync_ozon_ads_all_accounts,
+        "interval",
+        hours=6,  # раз в 6 часов
+        id="sync_ozon_ads_all_accounts",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("Scheduler started: Ozon every 30 min, WB every 180 min")
+    logger.info("Scheduler started: Ozon every 30 min, WB every 180 min, " "Ozon Ads every 6 hours")
 
 
 def stop_scheduler() -> None:
