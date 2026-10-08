@@ -153,7 +153,10 @@ async def refresh(
         )
 
     now = datetime.now(UTC)
-    if record.expires_at < now:
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at < now:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired",

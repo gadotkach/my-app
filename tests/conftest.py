@@ -64,13 +64,22 @@ async def client(engine) -> AsyncGenerator[AsyncClient, None]:
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db(engine):
     """Clean business data between tests, keep reference data intact."""
-    from app.models import Marketplace, TaxSettings
+    from app.models import (
+        Marketplace,
+        MarketplaceAccount,
+        RefreshToken,
+        TaxSettings,
+        TrialIdentity,
+    )
 
     async with engine.begin() as conn:
         # Удаляем бизнес-данные, но НЕ справочники (marketplaces, delivery_services)
         await conn.execute(delete(TaxSettings))
         await conn.execute(delete(Sale))
         await conn.execute(delete(Product))
+        await conn.execute(delete(RefreshToken))
+        await conn.execute(delete(MarketplaceAccount))  # ← ДО User (FK)
+        await conn.execute(delete(TrialIdentity))
         await conn.execute(delete(User))
         # Пересоздаём справочники (могут быть удалены предыдущим тестом)
         await conn.execute(delete(Marketplace))

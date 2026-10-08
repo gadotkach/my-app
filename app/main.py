@@ -3,11 +3,12 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import engine
+from app.deps import get_session
 from app.routers import (
     advertising,
     analytics,
@@ -67,8 +68,12 @@ app.include_router(advertising.router)
 
 
 @app.get("/health")
-async def health() -> dict[str, object]:
-    async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT 1"))
+async def health(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        result = await session.execute(text("SELECT 1"))
         db_ok = result.scalar() == 1
+    except Exception:
+        db_ok = False
     return {"status": "ok", "db": db_ok}
