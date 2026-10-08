@@ -419,10 +419,10 @@ async def test_wb_sync_sales_creates(client, monkeypatch):
     sales = sales_response.json()
     assert len(sales) == 2
 
-    # Проверяем первую продажу
-    s1 = next(s for s in sales if s["external_id"] == "unique-srid-1")
-    # price = 850 + 150 + 15 + 91 = 1106
-    assert s1["price"] == "1106.00"
-    assert s1["commission"] == "150.00"
-    assert s1["logistics_cost"] == "91.00"
+    # Проверяем первую продажу (external_id = rrdId)
+    s1 = next(s for s in sales if s["external_id"] == "1")
+    # В новом Finance API: price = retailAmount
+    assert s1["price"] == "1200.00"
+    assert s1["commission"] == "150.00"  # ppvzSalesCommission
+    assert s1["logistics_cost"] == "91.00"  # deliveryService
     assert s1["product_id"] is not None  # должен быть привязан к Product
