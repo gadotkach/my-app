@@ -67,6 +67,7 @@ async def clean_db(engine):
     from app.models import (
         Marketplace,
         MarketplaceAccount,
+        OzonAdsAccount,
         RefreshToken,
         TaxSettings,
         TrialIdentity,
@@ -78,7 +79,8 @@ async def clean_db(engine):
         await conn.execute(delete(Sale))
         await conn.execute(delete(Product))
         await conn.execute(delete(RefreshToken))
-        await conn.execute(delete(MarketplaceAccount))  # ← ДО User (FK)
+        await conn.execute(delete(MarketplaceAccount))
+        await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
         await conn.execute(delete(TrialIdentity))
         await conn.execute(delete(User))
         # Пересоздаём справочники (могут быть удалены предыдущим тестом)
