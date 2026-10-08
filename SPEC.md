@@ -74,8 +74,12 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ **Ozon Ads API** (Performance API) — полный цикл
 - ✅ **Ozon Ads UI** — карточка на `/integrations`
 - ✅ **Scheduler: Ozon Ads** — раз в 6 часов
-- ✅ **128 тестов** (было 113)
+- ✅ **Telegram-уведомления** (NEW 2026-10-08) — connect/disconnect/settings/test
+- ✅ **Telegram Scheduler**: `check_loss_making_products` (6h), `send_daily_reports` (6:00 UTC)
+- ✅ **Telegram Proxy** — Cloudflare Worker `tg-proxy-agregators`
+- ✅ **143 теста** (было 128, ранее 113)
 - ✅ **Workflow `git pull`** на VPS — вместо `scp`
+- ✅ **LoginRequest** — отдельная схема для `/auth/login` (без `name`)
 - ✅ Авто-миграции Alembic при старте контейнера
 - ✅ Шифрование API-ключей Fernet
 - ✅ Авто-sync через `POST /integrations/sync-if-stale` (пороги: Ozon 15 мин, WB products 60 мин, WB sales 180 мин)
@@ -91,6 +95,7 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ `/tax-settings` — форма налогов (NEW)
 - ✅ `/pricing` — 990 ₽/мес
 - ✅ `/expired` — окончание trial
+- ✅ `/notifications` — Telegram-уведомления (NEW 2026-10-08): connect, настройки, тест
 - ✅ Авто-sync при заходе на страницы (без кнопок)
 
 ### Инфраструктура
@@ -100,12 +105,14 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ Cloudflare DNS (DNS only для всех записей)
 - ✅ GitHub Actions — автодеплой фронта (rsync через SSH)
 - ✅ Docker Compose для backend
-- ✅ Scheduler: Ozon 30 мин, WB 180 мин
+- ✅ Scheduler: Ozon 30 мин, WB 180 мин, Ozon Ads 6ч, Loss check 6ч, Daily reports 6:00 UTC
+- ✅ **Cloudflare Worker** `tg-proxy-agregators` — edge-прокси для Telegram API
 
 ### Качество
-- ✅ 113 тестов, все зелёные
+- ✅ **143 теста**, все зелёные (Mac + VPS)
 - ✅ mypy strict, ruff, pre-commit
 - ⚠️ CI не настроен для backend (pre-push hook есть)
+- ✅ **GitHub Actions** — автодеплой (CI #75 - #88, Deploy #15 - #18)
 
 ---
 
@@ -205,6 +212,14 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - `client_secret_encrypted` — Fernet
 - `last_sync_at`, `created_at`, `updated_at`
 
+## `TelegramSubscription` (NEW 2026-10-08)
+- `id`, `user_id` (unique — one-to-one)
+- `chat_id` (unique) — Telegram chat ID
+- `telegram_username` — @username (опционально)
+- Флаги: `notify_new_sales`, `notify_loss_making`, `notify_daily_report`, `notify_drr_high`
+- `drr_threshold` (Decimal 5,2, default 50.00)
+- `connected_at`, `last_notification_at`
+
 ## `RefreshToken`, `TrialIdentity`, `Payment`
 - `RefreshToken` — refresh-токены с ротацией
 - `TrialIdentity` — защита от повторного trial
@@ -215,8 +230,8 @@ SaaS-платформа для селлеров маркетплейсов. Се
 # ЧАСТЬ 5: API-ЭНДПОИНТЫ
 
 ## Auth
-- `POST /auth/register` — регистрация + trial 30 дней
-- `POST /auth/login` — вход, access + refresh
+- `POST /auth/register` — регистрация + trial 30 дней (`UserCreate`: email, name, password)
+- `POST /auth/login` — вход, access + refresh (`LoginRequest`: email, password — без name)
 - `POST /auth/refresh` — обновление access
 - `POST /auth/logout` — выход
 - `GET /users/me` — текущий юзер с подпиской
@@ -378,7 +393,23 @@ services:
 
 **На VPS:** одна команда — `git pull origin main && docker compose build api && up -d`.
 
-**При изменениях requirements.txt или Dockerfile** — обязательно флаг `--no-cache` (Docker Bake игнорирует content-хеш).
+**При изменениях requirements.txt или Dockerfile** — обязательно флаг `--no-cache`.
+
+### Правило: все VPS-проверки — через ssh с Mac
+
+Плохо: заходишь интерактивно (ssh root@...), остаёшься в сессии, путаешь Mac/VPS.
+
+Хорошо: одна команда — один результат, всегда с Mac:
+
+    ssh root@91.142.73.226 "cd /opt/my-app && docker compose -f docker-compose.prod.yml exec -T api python3 -c \"...\""
+
+Плюсы:
+- Не застреваешь в root@pairs-bot:
+- История команд на Mac — легко повторить
+- Работает в &&-цепочках
+- exec -T — без tty, чисто для скриптов
+
+curl в контейнере нет — используем python3 -c для проверок.
 
 ## Переменные окружения (`.env`)
 
@@ -391,6 +422,8 @@ COOKIE_DOMAIN=.agregators.su
 TRIAL_PERIOD_DAYS=30
 SUBSCRIPTION_PERIOD_DAYS=30
 SUBSCRIPTION_PRICE_RUB=990
+TELEGRAM_BOT_TOKEN=<token от @BotFather>
+TELEGRAM_PROXY_URL=https://tg-proxy-agregators.shvaboe.workers.dev
 ```
 
 ---
@@ -413,16 +446,21 @@ my-app/
 │   ├── sync_service.py            # NEW: sync-if-stale, пороги устаревания
 │   ├── ozon_client.py             # httpx-клиент Ozon (FBS + FBO)
 │   ├── wb_client.py               # httpx-клиент WB
+│   ├── ozon_ads_client.py         # httpx-клиент Ozon Performance API
+│   ├── telegram_notifier.py       # NEW: sendMessage через Cloudflare Worker proxy
 │   ├── yookassa_client.py         # ЮKassa (отключён)
 │   ├── routers/
 │   │   ├── auth.py, users.py, products.py, sales.py
 │   │   ├── marketplaces.py, delivery_services.py
 │   │   ├── analytics.py           # 8 эндпоинтов + unit-economics/all
 │   │   ├── integrations.py        # Ozon + WB + sync-if-stale
+│   │   ├── ozon_ads.py            # Ozon Ads API (connect/sync/account)
+│   │   ├── notifications.py       # NEW: Telegram connect/settings/test
 │   │   ├── tax_settings.py
 │   │   └── subscriptions.py       # ЮKassa (отключён)
 │   └── services/
-│       └── unit_economics.py      # расчёт юнит-экономики
+│       ├── unit_economics.py      # расчёт юнит-экономики
+│       └── ozon_ads_sync.py       # sync Ozon Ads -> AdvertisingExpense
 ├── alembic/versions/              # миграции
 ├── tests/                         # 113 тестов
 ├── Dockerfile
@@ -431,6 +469,33 @@ my-app/
 ├── pyproject.toml                 # ruff + mypy
 └── .pre-commit-config.yaml
 ```
+
+## Cloudflare Worker — обход блокировки Telegram API (NEW 2026-10-08)
+
+**Проблема:** Telegram API (api.telegram.org) заблокирован в РФ — недоступен с VPS.
+
+**Решение:** Cloudflare Worker как edge-прокси.
+
+**Worker:** tg-proxy-agregators.shvaboe.workers.dev
+- Универсальный роут /bot<TOKEN>/* -> https://api.telegram.org/bot<TOKEN>/*
+- Переиспользуется для всех Telegram-ботов
+
+**В коде (1 строка):**
+
+    base_url = settings.telegram_proxy_url or TELEGRAM_API_BASE
+
+**В .env:**
+
+    TELEGRAM_PROXY_URL=https://tg-proxy-agregators.shvaboe.workers.dev
+
+**Плюсы:**
+- Легко откатить (убрать TELEGRAM_PROXY_URL)
+- Конфиг на уровне окружения, не в git
+- Диагностика через getMe / getWebhookInfo / getUpdates
+
+**Время решения:** ~1.5 часа (Worker + 2 патча + .env + smoke)
+
+**Куда применить ещё:** любые внешние API, заблокированные в РФ.
 
 ## `sync_service.py` — авто-sync
 
