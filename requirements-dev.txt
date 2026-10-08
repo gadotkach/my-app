@@ -8,3 +8,4 @@ pre-commit==4.0.1
 types-python-jose==3.3.4.20240106
 types-passlib==1.7.7.20240106
 # rebuild 2026-09-14: ensure yookassa installed
+aiosqlite
