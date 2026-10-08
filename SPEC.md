@@ -352,6 +352,88 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - Favicon + title «Agregators».
 - Deploy #19–#21.
 
+## 🟢 ROADMAP v2.5+: новые фичи (2026-10-08)
+
+### 1. SEO-анализ карточки (приоритет 1, 6-10 ч)
+
+**Цель:** ключевые запросы по товару — по каким запросам находят WB/Ozon.
+
+**Данные:**
+- WB: `analytics.wildberries.ru/api/v2/search-queries`.
+- Ozon: `api-seller.ozon.ru/v1/analytics/query`.
+
+**Модель:** `ProductSEOQuery` (product_id, query, position, frequency, date).
+
+**UI:** `/seo` или вкладка в `/products/{id}`.
+
+**Backend:** `app/services/seo_analyzer.py`, роутер `/analytics/seo`.
+
+### 2. Воронка продаж (приоритет 1, 4-6 ч)
+
+**Цель:** показы → клики → корзина → заказ — по каждому товару.
+
+**Данные:**
+- WB: `suppliers-analytics.wildberries.ru/api/v2/funnel`.
+- Ozon: `api-seller.ozon.ru/v1/analytics/data`.
+
+**Модель:** `ProductFunnel` (product_id, date, impressions, clicks, add_to_cart, orders).
+
+**UI:** вкладка в `/products/{id}` или `/funnel`.
+
+**Backend:** `app/services/funnel_analyzer.py`, роутер `/analytics/funnel`.
+
+### 3. Бенчмарки (приоритет 2, 1-2 дня)
+
+**Цель:** сравнить твои метрики с медианой категории.
+
+**Данные:**
+- Парсинг WB/Ozon каталога (топ-100 по категории).
+- Или WB API `content/v2/get/cards/list` + публичные.
+
+**Модель:** `Benchmark` (category, metric, median_value, computed_at).
+
+**UI:** `/benchmarks` или блок в `/dashboard`.
+
+**Backend:** `app/services/benchmark.py`.
+
+### 4. AI-помощник (приоритет 3, 2-3 дня)
+
+**Цель:** чат с данными — «почему упала прибыль?», «какой товар убыточный?».
+
+**LLM:** YandexGPT (для РФ, оплата в рублях) или OpenAI.
+
+**Backend:** `app/services/ai_assistant.py`.
+
+**UI:** плавающий виджет чата.
+
+**Модель:** `AIConversation`.
+
+### NOT DOING (есть у mpstats — нам не нужно)
+
+- Фоторедактор AI — не наша компетенция.
+- Биддер — риск (нужно доверие).
+- Плагин для браузера — неудобно поддерживать.
+- Внешняя аналитика всего WB/Ozon — дорого.
+- Автоответы — не наша тема.
+- Управление ценой — риск.
+
+### Сравнение с mpstats
+
+| Функция | Мы | mpstats |
+|---|---|---|
+| Юнит-экономика | точная | оценка |
+| ДРР по источникам | есть | оценка |
+| Telegram-уведомления | есть | нет |
+| Цена | 990 руб | 3000+ руб |
+| Простой UI | да | перегружен |
+| SEO-анализ | roadmap | есть |
+| Воронка | roadmap | есть |
+| Внешняя аналитика | нет | есть |
+| AI-фоторедактор | нет | есть |
+
+**Позиционирование:** «Точный расчёт прибыли за 990 руб/мес»
+vs mpstats «Аналитика рынка + AI за 30000 руб/мес».
+
 ## 🟡 ROADMAP: страницы
 
 | URL | Что | Эндпоинт готов? |
