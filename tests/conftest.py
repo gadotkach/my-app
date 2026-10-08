@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from app import models  # noqa: F401
 from app.config import settings
@@ -20,10 +20,13 @@ from app.models import DeliveryService, Marketplace, Product, Sale, User
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
+    # Для SQLite in-memory нужен StaticPool — одно соединение на всех
+    # Для Postgres — NullPool (каждое соединение своё, свой loop)
+    pool_class = StaticPool if "sqlite" in settings.test_database_url.lower() else NullPool
     engine = create_async_engine(
         settings.test_database_url,
         echo=False,
-        poolclass=NullPool,  # каждое соединение — под текущий loop
+        poolclass=pool_class,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

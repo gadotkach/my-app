@@ -252,3 +252,32 @@ class AdvertisingExpense(Base):
 
     marketplace: Mapped["Marketplace | None"] = relationship()
     product: Mapped["Product | None"] = relationship()
+
+
+class OzonAdsAccount(Base):
+    """
+    Credentials для Ozon Performance API (Ozon Ads).
+
+    Хранит Client ID (не секрет) и Client Secret (зашифрован Fernet).
+    Используется для автоматического сбора рекламных расходов Ozon.
+
+    Client ID выглядит так:
+    '106448101-1791440182845@advertising.performance.ozon.ru'
+    Получить: seller.ozon.ru → Настройки → API-ключи → Performance.
+    """
+
+    __tablename__ = "ozon_ads_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, unique=True
+    )
+    client_id: Mapped[str] = mapped_column(String(255))
+    client_secret_encrypted: Mapped[str] = mapped_column(Text)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship()
