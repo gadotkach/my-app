@@ -538,7 +538,190 @@ vs mpstats «Аналитика рынка + AI за 30000 руб/мес».
 - Интеграция с банком (недоступно).
 - Плагин для браузера (неудобно поддерживать).
 
-## 🟡 ROADMAP: страницы
+## 🟢 Расширяемая архитектура интеграций (NEW 2026-10-08)
+
+**Цель:** добавление нового маркетплейса — за 1-2 часа (не за день).
+
+### 3 уровня абстракции
+
+**Уровень 1. BaseMarketplaceClient (ABC)**
+
+Общий интерфейс для всех МП:
+
+- `code`, `name`, `api_base` — атрибуты класса.
+- `_authenticate()` — обязательный, получить токен.
+- `list_products()` — обязательный.
+- `list_sales()` — обязательный.
+- `list_advertising_expenses()` — опциональный (по умолчанию пусто).
+- `get_warehouse_stocks()` — опциональный.
+- `_get_token()` — общий, с кешем.
+- `_request()` — общий, httpx + retry + rate limit + 401-handling.
+
+**Уровень 2. MarketplaceRegistry**
+
+Реестр клиентов:
+
+- `@MarketplaceRegistry.register` — декоратор.
+- `MarketplaceRegistry.get(code)` — получить класс.
+- `MarketplaceRegistry.all()` — все зарегистрированные.
+- Авто-импорт в `app/marketplaces/__init__.py`.
+
+**Уровень 3. UI генерируется из config**
+
+Backend отдаёт `GET /marketplaces`:
+
+```json
+{
+  "marketplaces": [
+    {
+      "code": "ozon",
+      "name": "Ozon",
+      "fields": [
+        {"name": "client_id", "label": "Client-Id", "type": "text"},
+        {"name": "api_key", "label": "API-Key", "type": "password"}
+      ],
+      "has_ads": true,
+      "has_products": true,
+      "has_sales": true
+    }
+  ]
+}
+Frontend рендерит форму из fields + карточку на /integrations. 0 правок на новый МП.
+
+Добавление нового МП (пример: Мегамаркет)
+app/marketplaces/megamarket.py — ~150 строк (config + 4 метода).
+
+@MarketplaceRegistry.register — 1 строка.
+
+Миграция seed — 1 запись в Marketplace.
+
+Frontend — 0 правок (форма сгенерируется).
+
+Scheduler — auto (обходит все зарегистрированные).
+
+Итого: 1-2 часа (vs день).
+
+Roadmap: фазы
+Фаза 1 (1 день) — BaseMarketplaceClient + MarketplaceRegistry.
+
+Фаза 2 (1 день) — Рефакторинг Ozon (наследник Base).
+
+Фаза 3 (1 день) — Рефакторинг WB (наследник Base).
+
+Фаза 4 (1 день) — Frontend: генерация форм.
+
+Фаза 5 (2 ч) — Новый МП (Яндекс.Маркет) — проверка архитектуры.
+
+Итого: ~3-4 дня.
+
+🟢 Яндекс.Маркет — интеграция (приоритет 1)
+Почему Яндекс.Маркет: есть API, есть спрос, в SPEC уже code = "yandex_market".
+
+API:
+
+URL: https://api.partner.market.yandex.ru.
+
+Авторизация: OAuth (получается в ЛК Яндекс.Маркета).
+
+Endpoints:
+
+/campaigns — кампании.
+
+/campaigns/{id}/offers — товары.
+
+/campaigns/{id}/orders — заказы.
+
+/campaigns/{id}/stats — статистика.
+
+План (по новой архитектуре):
+
+app/marketplaces/yandex_market.py — клиент (наследник Base).
+
+MarketplaceAccount — работает (уже универсальный).
+
+Миграция: seed yandex_market в Marketplace.
+
+UI: карточка на /integrations (сгенерируется).
+
+Scheduler: sync_yandex_market_all_accounts.
+
+Оценка: 1 день (после Фазы 1-4).
+
+Пилот: Яндекс.Маркет — проверка расширяемой архитектуры.
+
+🟢 1С — интеграция (приоритет 2)
+Что: обмен данными с 1С (бухгалтерия, склад, себестоимость).
+
+Зачем:
+
+Себестоимость товаров из 1С (автоматически).
+
+Остатки из 1С (для FBS).
+
+Выгрузка продаж в 1С (для бухгалтерии).
+
+API 1С:
+
+1С:Предприятие имеет HTTP-сервисы (REST).
+
+Или: OData (стандартный протокол).
+
+Или: обмен через файлы (XML, CSV).
+
+План:
+
+app/integrations/1c_client.py — клиент (httpx).
+
+Настройки: URL 1С + логин/пароль.
+
+Модель: OneCAccount (user_id, url, credentials_encrypted).
+
+Роутер: /integrations/1c/* — connect/disconnect/sync.
+
+Синк: себестоимость — Product.cost_price, остатки — Product.stock.
+
+UI: карточка на /integrations (по аналогии с МП).
+
+Оценка: 2-3 дня (зависит от версии 1С).
+
+Приоритет: 2 (после Яндекс.Маркета).
+
+🟡 Банк — подготовка интеграции (приоритет 3)
+Что: интеграция с банком (Сбер, Т-Банк, Альфа) для:
+
+Расчётный счёт (выписки — авто-учёт).
+
+Эквайринг (поступления от покупателей).
+
+Кредиты (кредитная линия для селлеров).
+
+API банков:
+
+Сбер: https://api.sberbank.ru (СберБизнес API).
+
+Т-Банк: https://business.tinkoff.ru/openapi.
+
+Альфа: https://api.alfabank.ru.
+
+План (подготовка, не делать сразу):
+
+Изучить API (3 банка).
+
+Выбрать 1 банк (приоритет).
+
+Модель: BankAccount (user_id, bank_code, credentials).
+
+Клиент: app/integrations/bank_client.py.
+
+Синк: выписки — транзакции.
+
+UI: карточка на /integrations.
+
+Оценка: 3-5 дней (зависит от банка).
+
+Приоритет: 3 (пока не нужно для core-функций).
+
+🟡 ROADMAP: страницы
 
 | URL | Что | Эндпоинт готов? |
 |---|---|---|
