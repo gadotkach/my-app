@@ -1,6 +1,6 @@
 # 📋 SPEC — SaaS-агрегатор маркетплейсов
 
-**Версия:** 2.1 (обновлено 2026-10-07)
+**Версия:** 2.2 (обновлено 2026-10-08)
 **Статус:** production-ready, работает из РФ без VPN
 
 ---
@@ -70,7 +70,12 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ Аналитика: 9 эндпоинтов (см. Часть 4)
 - ✅ Tax settings: CRUD
 - ✅ **PATCH /products/{id}** — редактирование товаров (NEW)
-- ✅ **Пропорциональные страховые взносы** в расчёте налогов (NEW)
+- ✅ **Пропорциональные страховые взносы** в расчёте налогов
+- ✅ **Ozon Ads API** (Performance API) — полный цикл
+- ✅ **Ozon Ads UI** — карточка на `/integrations`
+- ✅ **Scheduler: Ozon Ads** — раз в 6 часов
+- ✅ **128 тестов** (было 113)
+- ✅ **Workflow `git pull`** на VPS — вместо `scp`
 - ✅ Авто-миграции Alembic при старте контейнера
 - ✅ Шифрование API-ключей Fernet
 - ✅ Авто-sync через `POST /integrations/sync-if-stale` (пороги: Ozon 15 мин, WB products 60 мин, WB sales 180 мин)
@@ -194,6 +199,12 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - `vat_enabled`, `vat_rate`
 - `created_at`, `updated_at`
 
+## `OzonAdsAccount` (NEW 2026-10-08)
+- `id`, `user_id` (unique — one-to-one)
+- `client_id` — Ozon Performance API Client ID (не секрет)
+- `client_secret_encrypted` — Fernet
+- `last_sync_at`, `created_at`, `updated_at`
+
 ## `RefreshToken`, `TrialIdentity`, `Payment`
 - `RefreshToken` — refresh-токены с ротацией
 - `TrialIdentity` — защита от повторного trial
@@ -235,6 +246,12 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - `POST /integrations/wb/sync/sales?from=...&to=...` — ⚠️ API deprecated
 - ⚠️ Лимиты Базового токена: products 1/час, sales 1/3 часа
 
+### Ozon Ads (Performance API)
+- `POST /integrations/ozon-ads/connect` — сохранение credentials
+- `GET /integrations/ozon-ads/account` — статус подключения
+- `DELETE /integrations/ozon-ads/account` — отключение
+- `POST /integrations/ozon-ads/sync?from=&to=` — sync расходов
+
 ### Общие
 - `GET /integrations/accounts` — список подключённых
 - `POST /integrations/sync-if-stale` — авто-sync (NEW, пороги)
@@ -266,7 +283,7 @@ SaaS-платформа для селлеров маркетплейсов. Се
 | `/` | Dashboard (сводка, 5 карточек, фильтр 7/30/90, авто-sync) | ✅ |
 | `/products` | Список товаров | ✅ |
 | `/sales` | Список продаж | ✅ |
-| `/integrations` | Ozon + WB карточки + кнопки ручного sync | ✅ |
+| `/integrations` | Ozon + WB + **Ozon Ads** карточки + sync | ✅ |
 | `/calculator` | Калькулятор юнит-экономики | ✅ |
 | `/unit-economics` | **Таблица прибыли по товарам** (фильтр убыточных, сортировка) | ✅ |
 | `/pricing` | Тариф 990 ₽/мес | ✅ |
@@ -354,6 +371,14 @@ services:
       - "127.0.0.1:8000:8000"
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 ```
+
+## Workflow деплоя (NEW 2026-10-08)
+
+**На Mac:** `git push`
+
+**На VPS:** одна команда — `git pull origin main && docker compose build api && up -d`.
+
+**При изменениях requirements.txt или Dockerfile** — обязательно флаг `--no-cache` (Docker Bake игнорирует content-хеш).
 
 ## Переменные окружения (`.env`)
 
@@ -527,6 +552,20 @@ roi_percent = net_profit / cogs × 100
 ### 1. `/unit-economics` — есть ✅
 Таблица прибыли по товарам с сортировкой и фильтром убыточных. **Уже в проде.**
 
+### 1a. Ozon Ads API — ЗАКРЫТО (2026-10-08)
+- Модель OzonAdsAccount + миграция
+- OzonAdsClient (6 методов)
+- Роутер /integrations/ozon-ads/* (4 эндпоинта)
+- Сервис sync_ozon_ads — батчи + upsert
+- Scheduler — раз в 6 часов
+- UI — карточка на /integrations
+- 15 тестов (7 endpoint + 8 client)
+
+### 1b. Workflow git pull — ЗАКРЫТО (2026-10-08)
+- VPS = git-репозиторий
+- git pull вместо scp
+- --no-cache при изменениях requirements
+
 ### 2. Редактирование себестоимости (D) 🟡
 - Backend: `PATCH /products/{id}`, схема `ProductUpdate` (все поля optional).
 - Frontend: модалка «Редактировать товар» на `/products`.
@@ -652,7 +691,9 @@ text
 
 ## Backend
 
-1. **WB Sales API deprecated** — sync продаж WB не работает.
+1. **WB Sales API deprecated** — sync продаж WB не работает (нужен Сервисный токен).
+2. **WB Ads API** — аналогично (Сервисный токен).
+3. **Docker Bake** — игнорирует changes requirements*. **--no-cache** обязателен.
 2. **`ENCRYPTION_KEY` vs `FERNET_KEY`** — в коде используется `ENCRYPTION_KEY`, но в старой спеке упоминался `FERNET_KEY`. Если кто-то путает — будет ошибка Fernet.
 3. **Docker `.pyc` кэш** — при `docker cp` код не перечитывается, нужен `restart`. Правильно — `docker compose build && up -d`.
 4. **CORS захардкожен** в `main.py` (не читается из env).
@@ -701,6 +742,14 @@ text
 4. **WB заголовок без `Bearer`** — просто `Authorization: <token>`.
 5. **URL `/wb/*`, а marketplace code `wildberries`** — осознанное решение.
 6. **🎯 При добавлении новой площадки** — см. пункт «Рефакторинг интеграций» в ROADMAP. Сначала рефакторинг, потом добавление.
+
+## При деплое на VPS (NEW 2026-10-08)
+
+1. Workflow: git push на Mac, git pull на VPS.
+2. Изменения requirements*.txt — обязательно --no-cache.
+3. .env и docker-compose.prod.yml — не в git.
+4. Миграции Alembic — автоматически при старте контейнера.
+5. Логи: docker compose logs api --tail=30.
 
 ## При работе с фронтом
 
