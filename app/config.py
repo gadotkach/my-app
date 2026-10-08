@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # Telegram bot
     telegram_bot_token: str = ""
+    telegram_proxy_url: str = ""  # Cloudflare Worker
     yookassa_return_url: str = "https://my-app-frontend-biz.pages.dev/pricing"
 
     model_config = {"env_file": ".env", "extra": "ignore"}

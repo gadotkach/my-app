@@ -24,7 +24,8 @@ async def send_message(chat_id: str, text: str) -> dict[str, Any]:
     if not settings.telegram_bot_token:
         raise TelegramNotifierError("TELEGRAM_BOT_TOKEN не настроен")
 
-    url = f"{TELEGRAM_API_BASE}/bot{settings.telegram_bot_token}/sendMessage"
+    base = settings.telegram_proxy_url or TELEGRAM_API_BASE
+    url = f"{base}/bot{settings.telegram_bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
