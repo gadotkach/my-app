@@ -96,7 +96,46 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ `/pricing` — 990 ₽/мес
 - ✅ `/expired` — окончание trial
 - ✅ `/notifications` — Telegram-уведомления (NEW 2026-10-08): connect, настройки, тест
+- ✅ **Mobile UI** — карточки / бургер / скролл (NEW 2026-10-08)
+- ✅ **Favicon + title «Agregators»** (NEW 2026-10-08)
 - ✅ Авто-sync при заходе на страницы (без кнопок)
+
+### Mobile UI (NEW 2026-10-08)
+
+**Принцип:** Tailwind `hidden md:block` + `md:hidden` карточки (breakpoint 768px).
+
+**Карточки на mobile (< 768px):**
+
+- `/sales` — карточки (Заказ / Цена / Комиссия / Логистика / Продано)
+- `/products` — карточки + кнопка «Редактировать»
+- `/advertising` — карточки + кнопка «Удалить»
+
+**Скролл на mobile (< 768px):**
+
+- `/dashboard` — «По площадкам» (6 колонок)
+- `/profit` — 12 колонок
+- `/abc` — 5 колонок + pie-chart
+- `/unit-economics` — 13 колонок
+
+**Layout — бургер-меню:**
+
+- Desktop (md+): горизонтальное меню (11 ссылок).
+- Mobile (< md): бургер (три полоски) → выпадающее меню.
+
+**Интеграции — flex-col на mobile:**
+
+- `/integrations`: карточки Ozon / WB / Ozon Ads — `flex flex-col md:flex-row`.
+- Кнопки — `flex flex-wrap` (переносятся в столбик).
+
+### Брендинг (NEW 2026-10-08)
+
+- **Название:** Agregators — аналитика маркетплейсов.
+- **Favicon:** `public/favicon.png` (120 KB).
+- **`<title>`:** `Agregators — аналитика маркетплейсов`.
+- **`<meta name="description">`:** SEO-описание.
+- **`theme-color`:** `#2563eb`.
+- **`apple-touch-icon`:** `/favicon.png`.
+- **`lang="ru"`.**
 
 ### Инфраструктура
 - ✅ VPS #1 (91.142.73.226, РФ) — backend + frontend
@@ -112,7 +151,7 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ **143 теста**, все зелёные (Mac + VPS)
 - ✅ mypy strict, ruff, pre-commit
 - ⚠️ CI не настроен для backend (pre-push hook есть)
-- ✅ **GitHub Actions** — автодеплой (CI #75 - #88, Deploy #15 - #18)
+- ✅ **GitHub Actions** — автодеплой (CI #75 - #90, Deploy #15 - #21)
 
 ---
 
@@ -304,6 +343,15 @@ SaaS-платформа для селлеров маркетплейсов. Се
 | `/pricing` | Тариф 990 ₽/мес | ✅ |
 | `/expired` | Окончание trial | ✅ |
 
+## ✅ ЗАКРЫТО: Mobile UI (2026-10-08)
+
+- Sales / Products / Advertising — карточки на mobile.
+- Layout — бургер-меню.
+- Integrations — flex-col.
+- Dashboard / Profit / Abc / UnitEconomics — скролл.
+- Favicon + title «Agregators».
+- Deploy #19–#21.
+
 ## 🟡 ROADMAP: страницы
 
 | URL | Что | Эндпоинт готов? |
@@ -312,6 +360,35 @@ SaaS-платформа для селлеров маркетплейсов. Се
 | `/abc` | ABC-анализ (pie-chart) | ✅ |
 | `/tax-settings` | Форма налогов | ✅ |
 | `/products/{id}` | Карточка товара + редактирование | 🟡 нужен бэкенд |
+
+## Mobile UI паттерны (NEW 2026-10-08)
+
+### Карточки на mobile (небольшие таблицы, до 6 колонок)
+
+Desktop: div.hidden.md:block.overflow-x-auto > table.
+
+Mobile: div.md:hidden.divide-y > карточки.
+
+Карточка: div.p-4.space-y-2, внутри:
+- flex justify-between — SKU + дата.
+- flex justify-between — label + value (несколько строк).
+- Кнопка действия (например, "Редактировать").
+
+### Скролл на mobile (большие таблицы, > 8 колонок)
+
+Обёртка div.overflow-x-auto вокруг table.
+
+### Бургер-меню (Layout.tsx)
+
+- useState(false) → menuOpen.
+- Кнопка md:hidden с SVG (три полоски / крестик).
+- Desktop-меню: hidden md:flex.
+- Mobile-dropdown: {menuOpen && div.md:hidden}.
+
+### flex-col на mobile (карточки с кнопками)
+
+div.flex.flex-col.md:flex-row.md:items-center.md:justify-between.gap-3
+внутри — div.flex.flex-wrap.gap-3 с кнопками.
 
 ## Стиль фронта
 - `max-w-6xl` / `max-w-7xl` для страниц, `text-2xl font-bold` для заголовков
