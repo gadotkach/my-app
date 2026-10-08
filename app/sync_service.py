@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 STALE_THRESHOLDS = {
     "ozon": 15,  # Ozon: каждые 15 минут
     "wildberries_product": 60,  # WB products: 1 час (лимит Базового токена)
-    "wildberries_sales": 180,  # WB sales: 3 часа (лимит Базового токена)
+    "wildberries_sales": 1440,  # 24ч: Базовый токен WB Finance API — 1 запрос/24ч
 }
 
 # In-memory lock, чтобы не запускать один и тот же sync параллельно

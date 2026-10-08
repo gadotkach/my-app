@@ -1,6 +1,7 @@
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -268,13 +269,51 @@ async def sync_wb_for_account(
                 stats["products_updated"] += 1
         await session.commit()
 
-    # --- Продажи (за последние 3 дня, чтобы не пересекаться с интервалом) ---
-    to = datetime.now(UTC)
-    since = to - timedelta(days=3)
+    # --- Продажи (Finance API — новый метод) ---
+    # Лимит: 1 запрос / 1 минуту. Синкаем окно 3 дня.
+    to_dt = datetime.now(UTC)
+    since_dt = to_dt - timedelta(days=3)
+    since_date = since_dt.date()
+    to_date = to_dt.date()
+
+    rows: list[dict[str, Any]] = []
     try:
-        rows = await wb.list_sales_report(date_from=since, date_to=to)
+        rows = await wb.get_sales_report_detailed_by_period(
+            date_from=since_date,
+            date_to=to_date,
+            period="weekly",
+            fields=[
+                "rrdId",
+                "srid",
+                "nmId",
+                "title",
+                "vendorCode",
+                "saleDt",
+                "orderDt",
+                "docTypeName",
+                "quantity",
+                "retailPrice",
+                "retailPriceWithDisc",
+                "retailAmount",
+                "commissionPercent",
+                "ppvzSalesCommission",
+                "acquiringFee",
+                "acquiringPercent",
+                "deliveryService",
+                "deliveryAmount",
+                "paidStorage",
+                "spp",
+                "forPay",
+            ],
+        )
+        if not rows:
+            logger.info("WB sales: no data for period (user=%s)", user_id)
     except WBClientError as e:
-        if "429" in str(e) or "limit" in str(e).lower():
+        err = str(e)
+        if "403" in err or "Forbidden" in err:
+            # У продавца нет данных за период (нет продаж) — это не ошибка
+            logger.info("WB sales: no data for period (403) for user=%s", user_id)
+        elif "429" in err or "limit" in err.lower():
             logger.warning("WB sales sync rate limited for user %s: %s", user_id, e)
         else:
             logger.warning("WB sales sync failed for user %s: %s", user_id, e)
@@ -283,7 +322,7 @@ async def sync_wb_for_account(
     # Собираем nm_id для маппинга
     nm_ids: set[str] = set()
     for row in rows:
-        nm_id = row.get("nm_id")
+        nm_id = row.get("nmId")
         if nm_id is not None:
             nm_ids.add(str(nm_id))
 
@@ -298,26 +337,56 @@ async def sync_wb_for_account(
             products_map = {p.sku: p for p in products}
 
         for row in rows:
-            srid = row.get("srid")
-            if not srid:
+            rrd_id_val = row.get("rrdId")
+            if rrd_id_val is None:
                 continue
-            external_id = str(srid)
+            external_id = str(rrd_id_val)
 
-            nm_id = row.get("nm_id")
+            doc_type = (row.get("docTypeName") or "").strip()
+            if doc_type and doc_type.lower() != "продажа":
+                logger.debug(
+                    "WB row skipped (docType=%s, rrdId=%s, user=%s)",
+                    doc_type,
+                    external_id,
+                    user_id,
+                )
+                continue
+
+            nm_id = row.get("nmId")
             product = products_map.get(str(nm_id)) if nm_id is not None else None
 
-            ppvz_for_pay = Decimal(str(row.get("ppvz_for_pay") or "0"))
-            ppvz_sales_commission = Decimal(str(row.get("ppvz_sales_commission") or "0"))
-            acquiring_fee = Decimal(str(row.get("acquiring_fee") or "0"))
-            delivery_rub = Decimal(str(row.get("delivery_rub") or "0"))
-            storage_fee = Decimal(str(row.get("storage_fee") or "0"))
-            retail_price_with_spp = row.get("retail_price_withdisc_rub")
-            spp_percent = row.get("ppvz_spp_prc")
+            def _d(r: dict[str, Any], key: str) -> Decimal:
+                v = r.get(key)
+                if v is None or v == "":
+                    return Decimal("0")
+                return Decimal(str(v))
 
-            price = ppvz_for_pay + ppvz_sales_commission + acquiring_fee + delivery_rub
-            quantity = int(row.get("ppvz_vw") or 1)
+            def _d_opt(r: dict[str, Any], key: str) -> Decimal | None:
+                v = r.get(key)
+                if v is None or v == "":
+                    return None
+                return Decimal(str(v))
 
-            sold_at_raw = row.get("sale_dt") or row.get("order_dt") or row.get("rr_dt")
+            quantity = int(row.get("quantity") or 1)
+            price = _d(row, "retailAmount")
+            commission = _d(row, "ppvzSalesCommission")
+            commission_percent = _d_opt(row, "commissionPercent")
+            logistics_cost = _d(row, "deliveryService")
+            return_logistics_cost = _d(row, "deliveryAmount")
+            acquiring_fee = _d(row, "acquiringFee")
+            acquiring_percent = _d_opt(row, "acquiringPercent")
+            storage_cost = _d(row, "paidStorage")
+            spp_percent = _d_opt(row, "spp")
+            retail_price_with_spp = _d_opt(row, "retailPriceWithDisc")
+            payout_amount = _d(row, "forPay")
+
+            spp_amount = (
+                retail_price_with_spp * spp_percent / Decimal("100")
+                if retail_price_with_spp is not None and spp_percent is not None
+                else Decimal("0")
+            )
+
+            sold_at_raw = row.get("saleDt") or row.get("orderDt")
             if sold_at_raw:
                 sold_at = datetime.fromisoformat(str(sold_at_raw).replace("Z", "+00:00"))
                 if sold_at.tzinfo is None:
@@ -333,12 +402,6 @@ async def sync_wb_for_account(
                 )
             )
 
-            spp_amount = (
-                Decimal(str(retail_price_with_spp)) * Decimal(str(spp_percent)) / Decimal("100")
-                if retail_price_with_spp is not None and spp_percent is not None
-                else Decimal("0")
-            )
-
             if existing_sale is None:
                 session.add(
                     Sale(
@@ -349,18 +412,17 @@ async def sync_wb_for_account(
                         external_id=external_id,
                         quantity=quantity,
                         price=price,
-                        commission=ppvz_sales_commission,
-                        logistics_cost=delivery_rub,
+                        commission=commission,
+                        commission_percent=commission_percent,
+                        logistics_cost=logistics_cost,
+                        return_logistics_cost=return_logistics_cost,
                         acquiring_fee=acquiring_fee,
-                        storage_cost=storage_fee,
-                        spp_percent=Decimal(str(spp_percent)) if spp_percent is not None else None,
+                        acquiring_percent=acquiring_percent,
+                        storage_cost=storage_cost,
+                        spp_percent=spp_percent,
                         spp_amount=spp_amount,
-                        retail_price_with_spp=(
-                            Decimal(str(retail_price_with_spp))
-                            if retail_price_with_spp is not None
-                            else None
-                        ),
-                        payout_amount=ppvz_for_pay,
+                        retail_price_with_spp=retail_price_with_spp,
+                        payout_amount=payout_amount,
                         sold_at=sold_at,
                     )
                 )
@@ -368,22 +430,20 @@ async def sync_wb_for_account(
             else:
                 existing_sale.quantity = quantity
                 existing_sale.price = price
-                existing_sale.commission = ppvz_sales_commission
-                existing_sale.logistics_cost = delivery_rub
+                existing_sale.commission = commission
+                existing_sale.commission_percent = commission_percent
+                existing_sale.logistics_cost = logistics_cost
+                existing_sale.return_logistics_cost = return_logistics_cost
                 existing_sale.acquiring_fee = acquiring_fee
-                existing_sale.storage_cost = storage_fee
-                existing_sale.spp_percent = (
-                    Decimal(str(spp_percent)) if spp_percent is not None else None
-                )
+                existing_sale.acquiring_percent = acquiring_percent
+                existing_sale.storage_cost = storage_cost
+                existing_sale.spp_percent = spp_percent
                 existing_sale.spp_amount = spp_amount
-                existing_sale.retail_price_with_spp = (
-                    Decimal(str(retail_price_with_spp))
-                    if retail_price_with_spp is not None
-                    else None
-                )
-                existing_sale.payout_amount = ppvz_for_pay
+                existing_sale.retail_price_with_spp = retail_price_with_spp
+                existing_sale.payout_amount = payout_amount
                 existing_sale.sold_at = sold_at
                 stats["sales_updated"] += 1
+
         await session.commit()
 
     return stats

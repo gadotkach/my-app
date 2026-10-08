@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -385,10 +386,21 @@ async def sync_wb_products(
     try:
         cards = await wb.list_products()
     except WBClientError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
+        err = str(e)
+        if "403" in err or "Forbidden" in err:
+            # Нет доступа / нет товаров — возвращаем пустой результат
+            cards = []
+        elif "429" in err or "limit" in err.lower():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="WB: превышен лимит запросов. Для Базового токена — 1 запрос/24ч, "
+                "для Персонального/Сервисного — 1 запрос/мин. Попробуйте позже.",
+            ) from e
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
 
     created = 0
     updated = 0
@@ -442,11 +454,12 @@ async def sync_wb_products(
 
 @router.post("/wb/sync/sales", response_model=WBSyncSalesResult)
 async def sync_wb_sales(
-    from_date: datetime = Query(..., alias="from"),
-    to_date: datetime = Query(..., alias="to"),
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
     current_user: User = Depends(require_active_subscription),
     session: AsyncSession = Depends(get_session),
 ) -> WBSyncSalesResult:
+    """Синхронизация продаж WB через новый Finance API."""
     account = await session.scalar(
         select(MarketplaceAccount)
         .join(Marketplace, MarketplaceAccount.marketplace_id == Marketplace.id)
@@ -470,18 +483,57 @@ async def sync_wb_sales(
 
     api_key = decrypt(account.api_key_encrypted)
     wb = WBClient(api_key)
-    try:
-        rows = await wb.list_sales_report(date_from=from_date, date_to=to_date)
-    except WBClientError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
 
-    # Собираем все nm_id из отчёта → один запрос в БД
+    try:
+        rows = await wb.get_sales_report_detailed_by_period(
+            date_from=from_date,
+            date_to=to_date,
+            period="daily",
+            fields=[
+                "rrdId",
+                "srid",
+                "nmId",
+                "title",
+                "vendorCode",
+                "saleDt",
+                "orderDt",
+                "docTypeName",
+                "quantity",
+                "retailPrice",
+                "retailPriceWithDisc",
+                "retailAmount",
+                "commissionPercent",
+                "ppvzSalesCommission",
+                "acquiringFee",
+                "acquiringPercent",
+                "deliveryService",
+                "deliveryAmount",
+                "paidStorage",
+                "spp",
+                "forPay",
+            ],
+        )
+    except WBClientError as e:
+        err = str(e)
+        if "403" in err or "Forbidden" in err:
+            # Нет данных за период (нет продаж) — возвращаем пустой результат
+            rows = []
+        elif "429" in err or "limit" in err.lower():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="WB: превышен лимит запросов. Для Базового токена — 1 запрос/24ч, "
+                "для Персонального/Сервисного — 1 запрос/мин. Попробуйте позже.",
+            ) from e
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
+
+    # Собираем nm_id
     nm_ids: set[str] = set()
     for row in rows:
-        nm_id = row.get("nm_id")
+        nm_id = row.get("nmId")
         if nm_id is not None:
             nm_ids.add(str(nm_id))
 
@@ -494,36 +546,53 @@ async def sync_wb_sales(
         products = (await session.execute(products_stmt)).scalars().all()
         products_map = {p.sku: p for p in products}
 
+    def _d(row: dict[str, Any], key: str) -> Decimal:
+        v = row.get(key)
+        if v is None or v == "":
+            return Decimal("0")
+        return Decimal(str(v))
+
+    def _d_opt(row: dict[str, Any], key: str) -> Decimal | None:
+        v = row.get(key)
+        if v is None or v == "":
+            return None
+        return Decimal(str(v))
+
     created = 0
     updated = 0
     for row in rows:
-        # external_id — уникальный ID строки отчёта (srid)
-        srid = row.get("srid")
-        if not srid:
+        rrd_id_val = row.get("rrdId")
+        if rrd_id_val is None:
             continue
-        external_id = str(srid)
+        external_id = str(rrd_id_val)
 
-        # nm_id для привязки к Product
-        nm_id = row.get("nm_id")
+        doc_type = (row.get("docTypeName") or "").strip()
+        if doc_type and doc_type.lower() != "продажа":
+            continue
+
+        nm_id = row.get("nmId")
         product = products_map.get(str(nm_id)) if nm_id is not None else None
 
-        # Суммы
-        ppvz_for_pay = Decimal(str(row.get("ppvz_for_pay") or "0"))
-        ppvz_sales_commission = Decimal(str(row.get("ppvz_sales_commission") or "0"))
-        acquiring_fee = Decimal(str(row.get("acquiring_fee") or "0"))
-        delivery_rub = Decimal(str(row.get("delivery_rub") or "0"))
-        storage_fee = Decimal(str(row.get("storage_fee") or "0"))
-        retail_price_with_spp = row.get("retail_price_withdisc_rub")
-        spp_percent = row.get("ppvz_spp_prc")
+        quantity = int(row.get("quantity") or 1)
+        price = _d(row, "retailAmount")
+        commission = _d(row, "ppvzSalesCommission")
+        commission_percent = _d_opt(row, "commissionPercent")
+        logistics_cost = _d(row, "deliveryService")
+        return_logistics_cost = _d(row, "deliveryAmount")
+        acquiring_fee = _d(row, "acquiringFee")
+        acquiring_percent = _d_opt(row, "acquiringPercent")
+        storage_cost = _d(row, "paidStorage")
+        spp_percent = _d_opt(row, "spp")
+        retail_price_with_spp = _d_opt(row, "retailPriceWithDisc")
+        payout_amount = _d(row, "forPay")
 
-        # Цена продажи = payout + все удержания (цена, которую увидел покупатель)
-        price = ppvz_for_pay + ppvz_sales_commission + acquiring_fee + delivery_rub
+        spp_amount = (
+            retail_price_with_spp * spp_percent / Decimal("100")
+            if retail_price_with_spp is not None and spp_percent is not None
+            else Decimal("0")
+        )
 
-        # Количество
-        quantity = int(row.get("ppvz_vw") or 1)
-
-        # Дата продажи
-        sold_at_raw = row.get("sale_dt") or row.get("order_dt") or row.get("rr_dt")
+        sold_at_raw = row.get("saleDt") or row.get("orderDt")
         if sold_at_raw:
             sold_at = datetime.fromisoformat(str(sold_at_raw).replace("Z", "+00:00"))
             if sold_at.tzinfo is None:
@@ -539,12 +608,6 @@ async def sync_wb_sales(
             )
         )
 
-        spp_amount = (
-            Decimal(str(retail_price_with_spp)) * Decimal(str(spp_percent)) / Decimal("100")
-            if retail_price_with_spp is not None and spp_percent is not None
-            else Decimal("0")
-        )
-
         if existing is None:
             session.add(
                 Sale(
@@ -555,18 +618,17 @@ async def sync_wb_sales(
                     external_id=external_id,
                     quantity=quantity,
                     price=price,
-                    commission=ppvz_sales_commission,
-                    logistics_cost=delivery_rub,
+                    commission=commission,
+                    commission_percent=commission_percent,
+                    logistics_cost=logistics_cost,
+                    return_logistics_cost=return_logistics_cost,
                     acquiring_fee=acquiring_fee,
-                    storage_cost=storage_fee,
-                    spp_percent=Decimal(str(spp_percent)) if spp_percent is not None else None,
+                    acquiring_percent=acquiring_percent,
+                    storage_cost=storage_cost,
+                    spp_percent=spp_percent,
                     spp_amount=spp_amount,
-                    retail_price_with_spp=(
-                        Decimal(str(retail_price_with_spp))
-                        if retail_price_with_spp is not None
-                        else None
-                    ),
-                    payout_amount=ppvz_for_pay,
+                    retail_price_with_spp=retail_price_with_spp,
+                    payout_amount=payout_amount,
                     sold_at=sold_at,
                 )
             )
@@ -574,16 +636,17 @@ async def sync_wb_sales(
         else:
             existing.quantity = quantity
             existing.price = price
-            existing.commission = ppvz_sales_commission
-            existing.logistics_cost = delivery_rub
+            existing.commission = commission
+            existing.commission_percent = commission_percent
+            existing.logistics_cost = logistics_cost
+            existing.return_logistics_cost = return_logistics_cost
             existing.acquiring_fee = acquiring_fee
-            existing.storage_cost = storage_fee
-            existing.spp_percent = Decimal(str(spp_percent)) if spp_percent is not None else None
+            existing.acquiring_percent = acquiring_percent
+            existing.storage_cost = storage_cost
+            existing.spp_percent = spp_percent
             existing.spp_amount = spp_amount
-            existing.retail_price_with_spp = (
-                Decimal(str(retail_price_with_spp)) if retail_price_with_spp is not None else None
-            )
-            existing.payout_amount = ppvz_for_pay
+            existing.retail_price_with_spp = retail_price_with_spp
+            existing.payout_amount = payout_amount
             existing.sold_at = sold_at
             updated += 1
 
@@ -592,8 +655,8 @@ async def sync_wb_sales(
         synced=len(rows),
         created=created,
         updated=updated,
-        period_from=from_date,
-        period_to=to_date,
+        period_from=datetime.combine(from_date, datetime.min.time()).replace(tzinfo=UTC),
+        period_to=datetime.combine(to_date, datetime.max.time()).replace(tzinfo=UTC),
     )
 
 

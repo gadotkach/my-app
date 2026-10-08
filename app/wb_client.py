@@ -1,6 +1,6 @@
 """Клиент Wildberries Seller API."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -16,6 +16,7 @@ class WBClient:
     COMMON_URL = "https://common-api.wildberries.ru"
     CONTENT_URL = "https://content-api.wildberries.ru"
     STATISTICS_URL = "https://statistics-api.wildberries.ru"
+    FINANCE_URL = "https://finance-api.wildberries.ru"
 
     def __init__(self, api_token: str, timeout: float = 30.0):
         self.api_token = api_token
@@ -53,7 +54,14 @@ class WBClient:
         if response.status_code == 401:
             raise WBClientError("WB: неверный токен (401 Unauthorized)")
         if response.status_code == 403:
-            raise WBClientError("WB: доступ запрещён — проверьте права токена (403 Forbidden)")
+            # WB Finance API возвращает 403, если:
+            # 1. У продавца нет данных за период (нет продаж, нет отчётов).
+            # 2. У токена нет прав на категорию «Финансы».
+            # Различить нельзя — логируем и поднимаем ошибку, а вызывающий код
+            # должен обработать её как «пусто» и не падать.
+            raise WBClientError(
+                "WB: 403 Forbidden — нет данных за период " "или нет прав на «Финансы»"
+            )
         if response.status_code == 429:
             raise WBClientError(
                 "WB: превышен лимит запросов (429 Too Many Requests). "
@@ -164,5 +172,88 @@ class WBClient:
             if not new_rrd or len(rows) < limit:
                 break
             rrd_id = int(new_rrd)
+
+        return result
+
+    # --------------------------------------------------------
+    # Продажи (Finance API — новый метод, работает с 29.01.2024)
+    # --------------------------------------------------------
+
+    async def list_sales_reports(
+        self,
+        date_from: date,
+        date_to: date,
+        period: str = "weekly",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """
+        Список отчётов реализации (новый Finance API).
+
+        Лимит: 1 запрос / 1 минуту. Персональный или Сервисный токен.
+        Возвращает: [{"reportId": 123, "dateFrom": "...", "forPaySum": "...", ...}]
+        """
+        payload: dict[str, Any] = {
+            "dateFrom": date_from.isoformat(),
+            "dateTo": date_to.isoformat(),
+            "period": period,
+            "limit": min(limit, 1000),
+            "offset": offset,
+        }
+        data = await self._post(
+            self.FINANCE_URL,
+            "/api/finance/v1/sales-reports/list",
+            payload,
+        )
+        if not data:
+            return []
+        return data if isinstance(data, list) else []
+
+    async def get_sales_report_detailed_by_period(
+        self,
+        date_from: date,
+        date_to: date,
+        period: str = "weekly",
+        limit: int = 100_000,
+        rrd_id: int = 0,
+        fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Детализация отчётов реализации за период (новый Finance API).
+
+        Лимит: 1 запрос / 1 минуту. Пагинация по rrdId — повторять до 204.
+        """
+        result: list[dict[str, Any]] = []
+
+        while True:
+            payload: dict[str, Any] = {
+                "dateFrom": date_from.isoformat(),
+                "dateTo": date_to.isoformat(),
+                "period": period,
+                "limit": min(limit, 100_000),
+                "rrdId": rrd_id,
+            }
+            if fields:
+                payload["fields"] = fields
+
+            data = await self._post(
+                self.FINANCE_URL,
+                "/api/finance/v1/sales-reports/detailed",
+                payload,
+            )
+
+            if not data:
+                break
+
+            rows = data if isinstance(data, list) else []
+            if not rows:
+                break
+
+            result.extend(rows)
+
+            last_rrd = rows[-1].get("rrdId")
+            if not last_rrd or len(rows) < payload["limit"]:
+                break
+            rrd_id = int(last_rrd)
 
         return result
