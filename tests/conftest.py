@@ -70,6 +70,7 @@ async def clean_db(engine):
         OzonAdsAccount,
         RefreshToken,
         TaxSettings,
+        TelegramSubscription,
         TrialIdentity,
     )
 
@@ -80,6 +81,7 @@ async def clean_db(engine):
         await conn.execute(delete(Product))
         await conn.execute(delete(RefreshToken))
         await conn.execute(delete(MarketplaceAccount))
+        await conn.execute(delete(TelegramSubscription))
         await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
         await conn.execute(delete(TrialIdentity))
         await conn.execute(delete(User))
@@ -126,3 +128,51 @@ async def _test_cookie_settings():
     settings.cookie_secure = False
     settings.cookie_domain = None
     yield
+
+
+# ============================================================
+# Фикстуры аутентификации
+# ============================================================
+
+
+@pytest_asyncio.fixture
+async def auth_headers(client) -> dict[str, str]:
+    """Зарегистрировать юзера и вернуть Authorization-заголовок."""
+    email = "testuser@example.com"
+    password = "secret123"
+
+    resp = await client.post(
+        "/auth/register",
+        json={"email": email, "password": password, "name": "Test User"},
+    )
+    assert resp.status_code in (200, 201), f"Register failed: {resp.text}"
+
+    # /auth/register возвращает UserRead, не Token → логинимся отдельно
+    resp = await client.post(
+        "/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert resp.status_code == 200, f"Login failed: {resp.text}"
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def second_user_headers(client) -> dict[str, str]:
+    """Второй юзер для тестов изоляции."""
+    email = "second@example.com"
+    password = "secret123"
+
+    resp = await client.post(
+        "/auth/register",
+        json={"email": email, "password": password, "name": "Second User"},
+    )
+    assert resp.status_code in (200, 201), f"Register failed: {resp.text}"
+
+    resp = await client.post(
+        "/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert resp.status_code == 200, f"Login failed: {resp.text}"
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}

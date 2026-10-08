@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.deps import get_session
 from app.models import RefreshToken, TrialIdentity, User
-from app.schemas import RefreshResponse, Token, UserCreate, UserRead
+from app.schemas import LoginRequest, RefreshResponse, Token, UserCreate, UserRead
 from app.security import (
     create_access_token,
     generate_refresh_token,
@@ -119,7 +119,7 @@ async def register(
 
 @router.post("/login", response_model=Token)
 async def login(
-    payload: UserCreate,
+    payload: LoginRequest,
     response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> Token:
