@@ -111,3 +111,16 @@ async def seed_reference_data(engine, clean_db):
         session.add_all(delivery_services)
         await session.commit()
     yield
+
+
+@pytest_asyncio.fixture(autouse=True, scope="session")
+async def _test_cookie_settings():
+    """Force test-friendly cookie settings regardless of .env.
+
+    VPS-окружение содержит COOKIE_SECURE=true и COOKIE_DOMAIN=.agregators.su.
+    В тестах это ломает работу cookies (HTTP + домен test).
+    Принудительно ставим безопасные значения на время тестов.
+    """
+    settings.cookie_secure = False
+    settings.cookie_domain = None
+    yield
