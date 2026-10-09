@@ -69,6 +69,7 @@ async def clean_db(engine):
     """Clean business data between tests, keep reference data intact."""
     from app.models import (
         ApiRequestLog,
+        AuditLog,
         Marketplace,
         MarketplaceAccount,
         OzonAdsAccount,
@@ -89,6 +90,7 @@ async def clean_db(engine):
         await conn.execute(delete(MarketplaceAccount))
         await conn.execute(delete(TelegramSubscription))
         await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
+        await conn.execute(delete(AuditLog))  # ← ДО User (FK)
         await conn.execute(delete(ApiRequestLog))  # ← ДО User (FK)
         await conn.execute(delete(UserConsent))  # ← ДО User (FK)
         await conn.execute(delete(UsedMarketplaceIdentity))
