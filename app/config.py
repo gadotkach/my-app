@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     frontend_base_url: str = "https://agregators.su"
     yookassa_return_url: str = "https://my-app-frontend-biz.pages.dev/pricing"
 
+    # Email (Yandex Cloud Postbox SMTP)
+    # ВАЖНО: SMTP_USER = key_id API-ключа (НЕ "postbox", НЕ email!)
+    # SMTP_PASSWORD = secret API-ключа
+    smtp_host: str = "postbox.cloud.yandex.net"
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@agregators.su"
+    smtp_from_name: str = "Agregators"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
