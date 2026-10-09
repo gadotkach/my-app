@@ -30,6 +30,8 @@ def _get_ses_client() -> Any:
         config=Config(
             signature_version="v4",
             retries={"max_attempts": 3, "mode": "standard"},
+            connect_timeout=5,
+            read_timeout=10,
         ),
     )
 

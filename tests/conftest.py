@@ -70,9 +70,11 @@ async def clean_db(engine):
     from app.models import (
         ApiRequestLog,
         AuditLog,
+        EmailVerificationToken,
         Marketplace,
         MarketplaceAccount,
         OzonAdsAccount,
+        PasswordResetToken,
         RefreshToken,
         TaxSettings,
         TelegramSubscription,
@@ -90,6 +92,8 @@ async def clean_db(engine):
         await conn.execute(delete(MarketplaceAccount))
         await conn.execute(delete(TelegramSubscription))
         await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
+        await conn.execute(delete(EmailVerificationToken))
+        await conn.execute(delete(PasswordResetToken))
         await conn.execute(delete(AuditLog))  # ← ДО User (FK)
         await conn.execute(delete(ApiRequestLog))  # ← ДО User (FK)
         await conn.execute(delete(UserConsent))  # ← ДО User (FK)
@@ -187,3 +191,23 @@ async def second_user_headers(client) -> dict[str, str]:
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+# ============================================================
+# Autouse: не отправлять реальные email во время тестов
+# ============================================================
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _disable_email_sending(monkeypatch):
+    """Все тесты: mock-отправка email, чтобы не звать boto3/Postbox."""
+    from unittest.mock import AsyncMock
+
+    import app.routers.auth as auth_module
+    import app.trial as trial_module
+
+    monkeypatch.setattr(auth_module, "send_email_verification_email", AsyncMock())
+    monkeypatch.setattr(auth_module, "send_password_reset_email", AsyncMock())
+    monkeypatch.setattr(auth_module, "send_password_changed_email", AsyncMock())
+    monkeypatch.setattr(trial_module, "send_trial_revoked_email", AsyncMock())
+    yield
