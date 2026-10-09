@@ -66,6 +66,20 @@ async def _issue_tokens(
     return Token(access_token=access_token)
 
 
+@router.get("/check-email")
+async def check_email(
+    email: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    """Проверка: доступен ли email для регистрации.
+
+    Возвращает {"available": bool}.
+    Не раскрывает существование аккаунта — только доступность.
+    """
+    existing = await session.scalar(select(User).where(User.email == email))
+    return {"available": existing is None}
+
+
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
     payload: UserCreate,
@@ -76,7 +90,7 @@ async def register(
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="User with this email already exists",
+            detail="Пользователь с таким email уже зарегистрирован",
         )
 
     client_ip = request.client.host if request.client else "unknown"
@@ -151,7 +165,7 @@ async def login(
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Неверный email или пароль",
         )
     # ФЗ-152: сохранить user_id для AuditMiddleware
     request.state.user_id = user.id
