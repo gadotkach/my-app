@@ -74,6 +74,10 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ **Ozon Ads API** (Performance API) — полный цикл
 - ✅ **Ozon Ads UI** — карточка на `/integrations`
 - ✅ **Scheduler: Ozon Ads** — раз в 6 часов
+- ✅ **Восстановление пароля** (2026-10-09) — `/auth/forgot-password` + `/auth/reset-password` + email
+- ✅ **Email Verification** (2026-10-10) — `/auth/verify-email` + `/auth/resend-verification` + баннер
+- ✅ **Защита от вечного trial** (2026-10-09) — `UsedMarketplaceIdentity` + баннер + письмо
+- ✅ **Postbox HTTP API** (2026-10-09) — обход блокировки SMTP 465 в РФ
 - ✅ **Telegram-уведомления** (NEW 2026-10-08) — connect/disconnect/settings/test
 - ✅ **Telegram Scheduler**: `check_loss_making_products` (6h), `send_daily_reports` (6:00 UTC)
 - ✅ **Telegram Proxy** — Cloudflare Worker `tg-proxy-agregators`
@@ -95,7 +99,10 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ `/tax-settings` — форма налогов (NEW)
 - ✅ `/pricing` — 990 ₽/мес
 - ✅ `/expired` — окончание trial
-- ✅ `/notifications` — Telegram-уведомления (NEW 2026-10-08): connect, настройки, тест
+- ✅ `/notifications` — Telegram-уведомления (2026-10-08): connect, настройки, тест
+- ✅ `/forgot-password` + `/reset-password?token=` — восстановление пароля (2026-10-09)
+- ✅ `/verify-email?token=` — подтверждение email (2026-10-10)
+- ✅ **Баннер «Подтвердите email»** в Layout + **«Trial отменён»** на Pricing/Expired
 - ✅ **Mobile UI** — карточки / бургер / скролл (NEW 2026-10-08)
 - ✅ **Favicon + title «Agregators»** (NEW 2026-10-08)
 - ✅ Авто-sync при заходе на страницы (без кнопок)
@@ -148,7 +155,7 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - ✅ **Cloudflare Worker** `tg-proxy-agregators` — edge-прокси для Telegram API
 
 ### Качество
-- ✅ **143 теста**, все зелёные (Mac + VPS)
+- ✅ **174 теста**, все зелёные (Mac + VPS)
 - ✅ mypy strict, ruff, pre-commit
 - ⚠️ CI не настроен для backend (pre-push hook есть)
 - ✅ **GitHub Actions** — автодеплой (CI #75 - #90, Deploy #15 - #21)
@@ -259,6 +266,18 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - `drr_threshold` (Decimal 5,2, default 50.00)
 - `connected_at`, `last_notification_at`
 
+## `PasswordResetToken` (NEW 2026-10-09)
+- `user_id`, `token_hash` (SHA-256, unique), `expires_at`, `used_at`
+- Используется для `/auth/forgot-password` + `/auth/reset-password`
+
+## `EmailVerificationToken` (NEW 2026-10-10)
+- `user_id`, `token_hash` (SHA-256, unique), `expires_at`, `used_at`
+- Используется для `/auth/verify-email` + `/auth/resend-verification`
+
+## `UsedMarketplaceIdentity` (NEW 2026-10-09)
+- `marketplace_code`, `identity_hash` (sha256 от client_id/api_key), `first_user_id`, `first_seen_at`
+- Защита от вечного trial: магазин = 1 trial
+
 ## `RefreshToken`, `TrialIdentity`, `Payment`
 - `RefreshToken` — refresh-токены с ротацией
 - `TrialIdentity` — защита от повторного trial
@@ -274,6 +293,12 @@ SaaS-платформа для селлеров маркетплейсов. Се
 - `POST /auth/refresh` — обновление access
 - `POST /auth/logout` — выход
 - `GET /users/me` — текущий юзер с подпиской
+
+## Auth (продолжение)
+- `POST /auth/forgot-password` — восстановление пароля (2026-10-09)
+- `POST /auth/reset-password` — сброс пароля по токену (2026-10-09)
+- `POST /auth/verify-email` — подтверждение email (2026-10-10)
+- `POST /auth/resend-verification` — повторная отправка письма (2026-10-10)
 
 ## Products
 - `POST /products` — создание
@@ -342,6 +367,50 @@ SaaS-платформа для селлеров маркетплейсов. Се
 | `/unit-economics` | **Таблица прибыли по товарам** (фильтр убыточных, сортировка) | ✅ |
 | `/pricing` | Тариф 990 ₽/мес | ✅ |
 | `/expired` | Окончание trial | ✅ |
+
+## ✅ ЗАКРЫТО: Восстановление пароля + Trial Protection + Email Verification (2026-10-09/10)
+
+### Восстановление пароля
+- Модель `PasswordResetToken` (token_hash SHA-256, expires_at +1 ч, used_at).
+- `POST /auth/forgot-password` — принимает email, создаёт токен, отправляет письмо.
+  - Всегда 200 (не раскрываем существование email).
+- `POST /auth/reset-password` — проверка токена, обновление `hashed_password`, `used_at`.
+- Frontend: `/forgot-password` (форма email) + `/reset-password?token=` (новый пароль).
+- 7 тестов.
+
+### Email Verification (double opt-in)
+- Модель `EmailVerificationToken` (token_hash SHA-256, expires_at +24 ч, used_at).
+- `User.email_verified` (bool, default False, indexed).
+- `POST /auth/verify-email` — подтверждение по токену.
+- `POST /auth/resend-verification` — повторная отправка (для `current_user`).
+- `register` отправляет письмо сразу после создания юзера.
+- Frontend:
+  - `EmailVerificationBanner.tsx` — баннер «Подтвердите email» с кнопкой resend.
+  - `VerifyEmail.tsx` — страница `/verify-email?token=`.
+- Мягкий подход: не блокируем функционал, только баннер.
+- 7 тестов.
+
+### Защита от вечного trial
+- Модель `UsedMarketplaceIdentity` (`marketplace_code` + `identity_hash` sha256(client_id или api_key)).
+- `record_marketplace_usage()` — при connect Ozon/WB:
+  - если магазин уже использовался другим юзером → trial отменяется.
+  - `User.trial_revoked_reason = "marketplace_already_used"`.
+  - письмо `send_trial_revoked_email`.
+- Frontend: баннер на `/pricing` и `/expired`.
+- 6 тестов.
+
+### Postbox HTTP API (обход блокировки SMTP 465)
+- VPS-провайдер блокирует исходящий TCP 465 (SMTP).
+- Yandex Postbox HTTP API (AWS SES v2-совместимый) через порт 443.
+- `boto3` sesv2 + SigV4 + статический ключ S3.
+- `app/email_client.py`: `_get_ses_client()` + `send_email()`.
+- `.env`: `POSTBOX_ENDPOINT`, `YANDEX_S3_ACCESS_KEY`, `YANDEX_S3_SECRET_KEY`.
+- `connect_timeout=5`, `read_timeout=10`.
+
+### Тесты — важное
+- **`_disable_email_sending` autouse fixture** в `tests/conftest.py` — mock всех email-отправок.
+- **Без патча** — `boto3.client("sesv2")` виснет **~4.5 сек** на EC2 metadata (169.254.169.254).
+- **С патчем** — `test_analytics.py` — **2.4 сек** вместо **23 сек**.
 
 ## ✅ ЗАКРЫТО: Mobile UI (2026-10-08)
 
