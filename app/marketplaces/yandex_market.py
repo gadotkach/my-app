@@ -73,17 +73,17 @@ class YandexMarketClient(BaseMarketplaceClient):
     async def verify_credentials(self) -> bool:
         """True, если токен валиден.
 
-        v1: POST /campaigns — возвращает список кампаний.
+        GET /campaigns — возвращает список кампаний.
         """
         try:
-            data = await self._post("/campaigns", {})
+            data = await self._get("/campaigns")
         except YandexMarketClientError:
             return False
         return isinstance(data, dict)
 
     async def list_campaigns(self) -> list[dict[str, Any]]:
         """Список кампаний селлера."""
-        data = await self._post("/campaigns", {})
+        data = await self._get("/campaigns")
         return data.get("campaigns", []) if isinstance(data, dict) else []
 
     async def list_orders(
