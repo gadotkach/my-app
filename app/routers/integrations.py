@@ -166,7 +166,7 @@ async def list_accounts(
         .where(MarketplaceAccount.user_id == current_user.id)
     )
     rows = (await session.execute(stmt)).all()
-    return [
+    out: list[MarketplaceAccountRead] = [
         MarketplaceAccountRead(
             id=account.id,
             marketplace_code=code,
@@ -175,6 +175,24 @@ async def list_accounts(
         )
         for account, code in rows
     ]
+
+    # Ozon Ads — отдельная таблица
+    from app.models import OzonAdsAccount
+
+    ads_account = await session.scalar(
+        select(OzonAdsAccount).where(OzonAdsAccount.user_id == current_user.id)
+    )
+    if ads_account is not None:
+        out.append(
+            MarketplaceAccountRead(
+                id=ads_account.id,
+                marketplace_code="ozon_ads",
+                client_id=ads_account.client_id,
+                created_at=ads_account.created_at,
+            )
+        )
+
+    return out
 
 
 @router.post("/ozon/sync/products", response_model=OzonSyncResult)
@@ -740,3 +758,59 @@ async def connect_yandex_market(
         client_id=account.client_id,
         created_at=account.created_at,
     )
+
+
+# ============================================================
+# Универсальное отключение МП (по code)
+# ============================================================
+
+
+@router.delete("/{code}/account", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_marketplace(
+    code: str,
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Универсальное отключение маркетплейса по code.
+
+    Работает для любого МП (ozon, wildberries, ozon_ads, yandex_market, ...).
+    Удаляет MarketplaceAccount текущего юзера для данного МП.
+    """
+    marketplace = await session.scalar(select(Marketplace).where(Marketplace.code == code))
+    if marketplace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Marketplace '{code}' not found",
+        )
+
+    # Ozon Ads — отдельная таблица (OAuth credentials)
+    if code == "ozon_ads":
+        from app.models import OzonAdsAccount
+
+        ads_account = await session.scalar(
+            select(OzonAdsAccount).where(OzonAdsAccount.user_id == current_user.id)
+        )
+        if ads_account is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ozon Ads not connected",
+            )
+        await session.delete(ads_account)
+        await session.commit()
+        return
+
+    # Остальные МП — универсально через MarketplaceAccount
+    account = await session.scalar(
+        select(MarketplaceAccount).where(
+            MarketplaceAccount.user_id == current_user.id,
+            MarketplaceAccount.marketplace_id == marketplace.id,
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Marketplace '{code}' not connected",
+        )
+
+    await session.delete(account)
+    await session.commit()
