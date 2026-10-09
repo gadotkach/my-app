@@ -191,6 +191,26 @@ class PasswordResetToken(Base):
     user: Mapped["User"] = relationship()
 
 
+class UsedMarketplaceIdentity(Base):
+    """Хранит все когда-либо подключённые маркетплейс-идентификаторы.
+
+    Цель: не давать вечный trial при смене email + IP.
+    Ключ: identity_hash = sha256(client_id или api_key).
+    """
+
+    __tablename__ = "used_marketplace_identities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    marketplace_code: Mapped[str] = mapped_column(String(50), index=True)
+    identity_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    first_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class TrialIdentity(Base):
     """Защита от повторного получения trial. Одна запись = один trial."""
 
