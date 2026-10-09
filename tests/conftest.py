@@ -76,6 +76,7 @@ async def clean_db(engine):
         TaxSettings,
         TelegramSubscription,
         TrialIdentity,
+        UsedMarketplaceIdentity,
         UserConsent,
     )
 
@@ -90,6 +91,7 @@ async def clean_db(engine):
         await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
         await conn.execute(delete(ApiRequestLog))  # ← ДО User (FK)
         await conn.execute(delete(UserConsent))  # ← ДО User (FK)
+        await conn.execute(delete(UsedMarketplaceIdentity))
         await conn.execute(delete(TrialIdentity))
         await conn.execute(delete(User))
         # Пересоздаём справочники (могут быть удалены предыдущим тестом)
