@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     smtp_from: str = "noreply@agregators.su"
     smtp_from_name: str = "Agregators"
 
+    # Yandex Cloud Postbox HTTP API (SigV4 через статический ключ S3)
+    # Используется ВМЕСТО SMTP (VPS блокирует 465).
+    postbox_endpoint: str = "https://postbox.cloud.yandex.net"
+    yandex_s3_access_key: str = ""
+    yandex_s3_secret_key: str = ""
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property

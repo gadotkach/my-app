@@ -1,19 +1,37 @@
-"""Email-клиент для отправки транзитных писем через Yandex Cloud Postbox SMTP.
+"""Email-клиент для отправки транзакционных писем.
 
-Особенности Yandex Postbox SMTP:
-- SMTP_USER = key_id API-ключа (например, aje70ab4gnu64mpqcsga), НЕ "postbox" и НЕ email.
-- SMTP_PASSWORD = secret API-ключа (AQVN...), 40 символов.
-- Порт 465 = SMTPS (SSL).
+Использует Yandex Cloud Postbox HTTP API (AWS SES v2-совместимый).
+Авторизация — AWS Signature v4 через статический ключ S3.
+
+Почему HTTP API, а не SMTP:
+- VPS-провайдер блокирует исходящий порт 465 (SMTP).
+- HTTP API работает через порт 443 — не блокируется.
 """
 
 import logging
-from email.message import EmailMessage
+from typing import Any
 
-import aiosmtplib
+import boto3
+from botocore.config import Config
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_ses_client() -> Any:
+    """Создаёт boto3-клиент для Yandex Cloud Postbox (SES v2 API)."""
+    return boto3.client(
+        "sesv2",
+        endpoint_url=settings.postbox_endpoint,
+        region_name="ru-central1",
+        aws_access_key_id=settings.yandex_s3_access_key,
+        aws_secret_access_key=settings.yandex_s3_secret_key,
+        config=Config(
+            signature_version="v4",
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
+    )
 
 
 async def send_email(
@@ -22,29 +40,40 @@ async def send_email(
     html_body: str,
     text_body: str | None = None,
 ) -> None:
-    """Отправляет email через Yandex Postbox SMTP."""
-    if not settings.smtp_user or not settings.smtp_password:
-        logger.warning("SMTP не настроен — письмо не отправлено (to=%s)", to)
-        raise RuntimeError("SMTP is not configured")
+    """Отправляет email через Yandex Cloud Postbox HTTP API.
 
-    msg = EmailMessage()
-    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from}>"
-    msg["To"] = to
-    msg["Subject"] = subject
+    Синхронный boto3 вызов оборачивается в asyncio.to_thread.
+    """
+    import asyncio
 
-    msg.set_content(text_body or "Просмотрите это письмо в HTML-совместимом клиенте.")
-    if html_body:
-        msg.add_alternative(html_body, subtype="html")
+    if not settings.yandex_s3_access_key or not settings.yandex_s3_secret_key:
+        logger.warning("Postbox API не настроен — письмо не отправлено (to=%s)", to)
+        raise RuntimeError("Postbox API is not configured")
 
-    await aiosmtplib.send(
-        msg,
-        hostname=settings.smtp_host,
-        port=settings.smtp_port,
-        username=settings.smtp_user,
-        password=settings.smtp_password,
-        use_tls=True,
-    )
-    logger.info("Email sent to %s (subject=%s)", to, subject)
+    def _send() -> dict[str, Any]:
+        client = _get_ses_client()
+        body: dict[str, Any] = {
+            "Text": {"Data": text_body or "Просмотрите письмо в HTML-совместимом клиенте."},
+        }
+        if html_body:
+            body["Html"] = {"Data": html_body}
+
+        response: dict[str, Any] = dict(
+            client.send_email(
+                FromEmailAddress=f"{settings.smtp_from_name} <{settings.smtp_from}>",
+                Destination={"ToAddresses": [to]},
+                Content={
+                    "Simple": {
+                        "Subject": {"Data": subject, "Charset": "UTF-8"},
+                        "Body": body,
+                    }
+                },
+            )
+        )
+        return response
+
+    result = await asyncio.to_thread(_send)
+    logger.info("Email sent to %s (MessageId=%s)", to, result.get("MessageId"))
 
 
 async def send_password_reset_email(to: str, reset_url: str) -> None:
