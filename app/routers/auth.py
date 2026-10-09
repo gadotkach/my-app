@@ -184,6 +184,15 @@ async def register(
 
     await session.commit()
     await session.refresh(user)
+
+    # Email Verification: отправить письмо с токеном (best-effort)
+    try:
+        raw_token = await _create_email_verification_token(session, user)
+        verify_url = f"{settings.frontend_base_url.rstrip('/')}" f"/verify-email?token={raw_token}"
+        await send_email_verification_email(to=user.email, verify_url=verify_url)
+    except Exception:
+        logger.exception("Failed to send verification email to %s", user.email)
+
     return user
 
 
