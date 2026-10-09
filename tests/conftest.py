@@ -54,6 +54,9 @@ async def client(engine) -> AsyncGenerator[AsyncClient, None]:
 
     fastapi_app.dependency_overrides[get_session] = override_get_session
 
+    # ФЗ-152: AuditMiddleware — use test session_maker
+    fastapi_app.state.session_maker = SessionLocal
+
     transport = ASGITransport(app=fastapi_app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
@@ -48,6 +49,9 @@ async def get_current_user(
     if last is None or (now - last) > timedelta(minutes=5):
         user.last_activity_at = now
         await session.commit()
+
+    # ФЗ-152: сохранить user_id для AuditMiddleware
+    request.state.user_id = user.id
 
     return user
 

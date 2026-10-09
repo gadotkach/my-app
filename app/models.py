@@ -1,7 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -376,3 +378,28 @@ class UserConsent(Base):
     __table_args__ = (UniqueConstraint("user_id", "consent_type", name="uq_user_consent_type"),)
 
     user: Mapped["User"] = relationship()
+
+
+class AuditLog(Base):
+    """Лог доступа к ПДн (152-ФЗ, требование РКН — хранение 1 год).
+
+    Логируются только чувствительные эндпоинты:
+    login, register, logout, consent/*, users/me/*, integrations/*.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(50), index=True)
+    resource: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

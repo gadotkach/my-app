@@ -8,7 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import AsyncSessionLocal
 from app.deps import get_session
+from app.middleware.audit import AuditMiddleware
 from app.routers import (
     advertising,
     analytics,
@@ -42,6 +44,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="My App", lifespan=lifespan)
 
+# ФЗ-152: session-maker для AuditMiddleware (overridable в тестах)
+app.state.session_maker = AsyncSessionLocal
+
 _cors_env = os.getenv(
     "CORS_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://my-app-frontend-biz.pages.dev",
@@ -55,6 +60,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ФЗ-152: аудит доступа к ПДн
+app.add_middleware(AuditMiddleware)
 
 app.include_router(auth.router)
 app.include_router(users.router)

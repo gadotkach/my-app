@@ -132,6 +132,9 @@ async def register(
             )
         )
 
+    # ФЗ-152: сохранить user_id для AuditMiddleware
+    request.state.user_id = user.id
+
     await session.commit()
     await session.refresh(user)
     return user
@@ -140,6 +143,7 @@ async def register(
 @router.post("/login", response_model=Token)
 async def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> Token:
@@ -149,6 +153,8 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+    # ФЗ-152: сохранить user_id для AuditMiddleware
+    request.state.user_id = user.id
     return await _issue_tokens(user.id, session, response)
 
 
