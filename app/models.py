@@ -44,6 +44,10 @@ class User(Base):
     subscription_ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Email Verification (double opt-in)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", index=True
+    )
     # Защита от вечного trial: причина отмены (например, "marketplace_already_used")
     trial_revoked_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # ФЗ-152: soft delete (30 дней до hard delete)
@@ -169,6 +173,26 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
+class EmailVerificationToken(Base):
+    """Токен подтверждения email (152-ФЗ + double opt-in).
+
+    Хранит sha256-хеш токена (не открытый текст).
+    Токен живёт 24 часа (больше, чем у password reset — email может быть забыт).
+    used_at — после успешного подтверждения.
+    """
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship()

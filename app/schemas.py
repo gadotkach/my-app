@@ -20,6 +20,7 @@ class UserRead(BaseModel):
     trial_ends_at: datetime | None
     subscription_ends_at: datetime | None
     trial_revoked_reason: str | None = None
+    email_verified: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
