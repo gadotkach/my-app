@@ -1,5 +1,10 @@
 import hashlib
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import UsedMarketplaceIdentity, User
+
 
 def hash_identity(ip: str, user_agent: str) -> str:
     """Хеш от IP + User-Agent. Используется для одного trial на устройство/сеть."""
@@ -21,3 +26,59 @@ def hash_marketplace_identity(marketplace_code: str, identity: str) -> str:
     """
     raw = f"{marketplace_code}:{identity}".encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+async def record_marketplace_usage(
+    session: AsyncSession,
+    user: User,
+    marketplace_code: str,
+    identity: str,
+) -> bool:
+    """Записывает использование маркетплейса (защита от вечного trial).
+
+    Args:
+        session: AsyncSession (уже открытая в роутере).
+        user: текущий пользователь.
+        marketplace_code: "ozon", "wb", ...
+        identity: client_id для Ozon, raw api_key для WB.
+
+    Returns:
+        True — магазин уже использовался другим юзером
+               (trial отменён, если был trialing).
+        False — новое использование или тот же юзер.
+
+    Побочный эффект:
+        Если trial пользователя активен и магазин уже использовался
+        другим — переводит subscription_status в "none".
+    """
+    identity_hash = hash_marketplace_identity(marketplace_code, identity)
+
+    existing = await session.scalar(
+        select(UsedMarketplaceIdentity).where(
+            UsedMarketplaceIdentity.identity_hash == identity_hash
+        )
+    )
+
+    if existing is None:
+        # Первое использование — записываем
+        session.add(
+            UsedMarketplaceIdentity(
+                marketplace_code=marketplace_code,
+                identity_hash=identity_hash,
+                first_user_id=user.id,
+            )
+        )
+        await session.commit()
+        return False
+
+    if existing.first_user_id == user.id:
+        # Тот же юзер — всё ок
+        return False
+
+    # Магазин уже использовался другим юзером
+    if user.subscription_status == "trialing":
+        user.subscription_status = "none"
+        await session.commit()
+        return True
+
+    return True

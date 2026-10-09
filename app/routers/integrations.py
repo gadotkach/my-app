@@ -21,6 +21,7 @@ from app.schemas import (
     YandexMarketConnect,
 )
 from app.sync_service import trigger_sync_if_stale
+from app.trial import record_marketplace_usage
 from app.wb_client import WBClient, WBClientError
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -90,6 +91,10 @@ async def connect_ozon(
         await session.commit()
         await session.refresh(account)
 
+    # Защита от вечного trial: если client_id уже использовался другим юзером —
+    # отменяем trial текущего пользователя.
+    await record_marketplace_usage(session, current_user, "ozon", payload.client_id)
+
     return MarketplaceAccountRead(
         id=account.id,
         marketplace_code=marketplace.code,
@@ -146,6 +151,10 @@ async def connect_wb(
         session.add(account)
         await session.commit()
         await session.refresh(account)
+
+    # Защита от вечного trial: если api_key уже использовался другим юзером
+    # (raw, до шифрования) — отменяем trial текущего пользователя.
+    await record_marketplace_usage(session, current_user, "wb", payload.api_key)
 
     return MarketplaceAccountRead(
         id=account.id,
