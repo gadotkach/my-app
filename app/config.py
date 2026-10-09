@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # Telegram bot
     telegram_bot_token: str = ""
     telegram_proxy_url: str = ""  # Cloudflare Worker
+
+    # Yandex OAuth (Яндекс ID)
+    yandex_oauth_client_id: str = ""
+    yandex_oauth_client_secret: str = ""
+    yandex_oauth_redirect_uri: str = "https://api.agregators.su/auth/yandex/callback"
     yookassa_return_url: str = "https://my-app-frontend-biz.pages.dev/pricing"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
