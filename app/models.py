@@ -172,6 +172,25 @@ class RefreshToken(Base):
     user: Mapped["User"] = relationship()
 
 
+class PasswordResetToken(Base):
+    """Токен восстановления пароля (152-ФЗ).
+
+    Хранит sha256-хеш токена (не открытый текст).
+    Токен живёт 1 час. used_at — после успешной смены пароля.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
 class TrialIdentity(Base):
     """Защита от повторного получения trial. Одна запись = один trial."""
 
