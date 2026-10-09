@@ -61,8 +61,12 @@ class OzonClient:
             data = await self._post("/v3/product/list", payload)
             items = data.get("result", {}).get("items", [])
             result.extend(items)
+            # Если товаров меньше limit — это последняя страница
+            # (Ozon иногда возвращает last_id, даже когда товары закончились)
+            if len(items) < limit:
+                break
             last_id = data.get("result", {}).get("last_id", "")
-            if not last_id or not items:
+            if not last_id:
                 break
         return result
 
