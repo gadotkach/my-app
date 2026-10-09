@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -8,13 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.deps import get_current_user, get_session
-from app.models import RefreshToken, TrialIdentity, User, UserConsent
+from app.email_client import (
+    send_password_changed_email,
+    send_password_reset_email,
+)
+from app.models import (
+    PasswordResetToken,
+    RefreshToken,
+    TrialIdentity,
+    User,
+    UserConsent,
+)
 from app.schemas import (
     ConsentAcceptRequest,
     ConsentRead,
     ConsentStatusResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     RefreshResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     Token,
     UserCreate,
     UserRead,
@@ -40,6 +55,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 REFRESH_COOKIE_NAME = "refresh_token"
 YANDEX_STATE_COOKIE_NAME = "yandex_oauth_state"
 YANDEX_STATE_MAX_AGE = 600  # 10 минут
+
+logger = logging.getLogger(__name__)
 
 
 async def _issue_tokens(
@@ -461,3 +478,118 @@ async def yandex_callback(
             redirect.headers.append("set-cookie", header)
 
     return redirect
+
+
+# ============================================================
+# Восстановление пароля
+# ============================================================
+
+
+def _hash_reset_token(token: str) -> str:
+    """SHA-256 хеш токена для хранения в БД."""
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> ForgotPasswordResponse:
+    """Запрос на восстановление пароля.
+
+    Всегда возвращает 200, чтобы не раскрывать существование аккаунта.
+    Если email найден — создаёт токен (живёт 1 час) и отправляет письмо.
+    """
+    user = await session.scalar(select(User).where(User.email == payload.email))
+
+    if user is not None and not user.deleted_at:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = _hash_reset_token(raw_token)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+        session.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+            )
+        )
+        await session.commit()
+
+        reset_url = f"{settings.frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
+
+        try:
+            await send_password_reset_email(to=user.email, reset_url=reset_url)
+        except Exception:
+            logger.exception("Failed to send password reset email to %s", user.email)
+
+    return ForgotPasswordResponse()
+
+
+@router.post(
+    "/reset-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ResetPasswordResponse:
+    """Сброс пароля по токену из письма."""
+    if len(payload.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароль должен быть не менее 6 символов",
+        )
+
+    token_hash = _hash_reset_token(payload.token)
+
+    record = await session.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела",
+        )
+
+    if record.used_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка уже использована",
+        )
+
+    now = datetime.now(UTC)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка истекла. Запросите новую.",
+        )
+
+    user = await session.scalar(select(User).where(User.id == record.user_id))
+    if user is None or user.deleted_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Аккаунт недоступен",
+        )
+
+    user.hashed_password = hash_password(payload.new_password)
+    record.used_at = now
+    await session.commit()
+
+    try:
+        await send_password_changed_email(to=user.email)
+    except Exception:
+        logger.exception("Failed to send password changed email to %s", user.email)
+
+    return ResetPasswordResponse()

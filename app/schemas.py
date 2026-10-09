@@ -663,3 +663,31 @@ class UserDeleteResponse(BaseModel):
     deleted: bool
     deletion_scheduled_at: datetime
     detail: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Запрос на восстановление пароля."""
+
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Ответ на запрос восстановления.
+
+    Не раскрывает, существует ли email — всегда одинаковый текст.
+    """
+
+    detail: str = "Если аккаунт существует, письмо с инструкцией отправлено."
+
+
+class ResetPasswordRequest(BaseModel):
+    """Сброс пароля по токену из письма."""
+
+    token: str
+    new_password: str
+
+
+class ResetPasswordResponse(BaseModel):
+    """Успешный сброс пароля."""
+
+    detail: str = "Пароль успешно изменён."
