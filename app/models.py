@@ -39,6 +39,10 @@ class User(Base):
     subscription_ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # ФЗ-152: soft delete (30 дней до hard delete)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     tax_settings: Mapped["TaxSettings | None"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
@@ -347,3 +351,28 @@ class ApiRequestLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+class UserConsent(Base):
+    """Согласие субъекта ПДн на обработку (152-ФЗ).
+
+    Хранит факт согласия: тип, время, IP, user-agent.
+    При отзыве — revoked_at заполняется, запись сохраняется (для аудита).
+    """
+
+    __tablename__ = "user_consents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    consent_type: Mapped[str] = mapped_column(String(50), index=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "consent_type", name="uq_user_consent_type"),)
+
+    user: Mapped["User"] = relationship()

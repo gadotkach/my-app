@@ -65,6 +65,7 @@ async def client(engine) -> AsyncGenerator[AsyncClient, None]:
 async def clean_db(engine):
     """Clean business data between tests, keep reference data intact."""
     from app.models import (
+        ApiRequestLog,
         Marketplace,
         MarketplaceAccount,
         OzonAdsAccount,
@@ -72,6 +73,7 @@ async def clean_db(engine):
         TaxSettings,
         TelegramSubscription,
         TrialIdentity,
+        UserConsent,
     )
 
     async with engine.begin() as conn:
@@ -83,6 +85,8 @@ async def clean_db(engine):
         await conn.execute(delete(MarketplaceAccount))
         await conn.execute(delete(TelegramSubscription))
         await conn.execute(delete(OzonAdsAccount))  # ← ДО User (FK)
+        await conn.execute(delete(ApiRequestLog))  # ← ДО User (FK)
+        await conn.execute(delete(UserConsent))  # ← ДО User (FK)
         await conn.execute(delete(TrialIdentity))
         await conn.execute(delete(User))
         # Пересоздаём справочники (могут быть удалены предыдущим тестом)

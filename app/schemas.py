@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
@@ -593,3 +594,56 @@ class TelegramTestResult(BaseModel):
 
     sent: bool
     detail: str | None = None
+
+
+# ============================================================
+# ФЗ-152: Согласия на обработку ПДн
+# ============================================================
+
+ConsentType = Literal["pd_processing", "oferta", "marketing"]
+
+
+class ConsentRead(BaseModel):
+    """Согласие субъекта ПДн (152-ФЗ)."""
+
+    consent_type: str
+    granted_at: datetime
+    revoked_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConsentStatusResponse(BaseModel):
+    """Статус всех согласий юзера."""
+
+    consents: list[ConsentRead]
+
+
+class ConsentAcceptRequest(BaseModel):
+    """Принять (или отозвать) согласие."""
+
+    consent_type: ConsentType
+
+
+class UserExportResponse(BaseModel):
+    """Экспорт всех данных пользователя (152-ФЗ, право на доступ).
+
+    Возвращает полный JSON со всеми данными: user, products, sales,
+    integrations, tax_settings, consents.
+    """
+
+    user: dict[str, Any]
+    products: list[dict[str, Any]]
+    sales: list[dict[str, Any]]
+    integrations: list[dict[str, Any]]
+    tax_settings: dict[str, Any] | None
+    consents: list[dict[str, Any]]
+    exported_at: datetime
+
+
+class UserDeleteResponse(BaseModel):
+    """Результат soft delete аккаунта."""
+
+    deleted: bool
+    deletion_scheduled_at: datetime
+    detail: str

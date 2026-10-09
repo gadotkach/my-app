@@ -5,9 +5,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.deps import get_session
-from app.models import RefreshToken, TrialIdentity, User
-from app.schemas import LoginRequest, RefreshResponse, Token, UserCreate, UserRead
+from app.deps import get_current_user, get_session
+from app.models import RefreshToken, TrialIdentity, User, UserConsent
+from app.schemas import (
+    ConsentAcceptRequest,
+    ConsentRead,
+    ConsentStatusResponse,
+    LoginRequest,
+    RefreshResponse,
+    Token,
+    UserCreate,
+    UserRead,
+)
 from app.security import (
     create_access_token,
     generate_refresh_token,
@@ -112,6 +121,17 @@ async def register(
             )
         )
 
+    # ФЗ-152: запись согласий на обработку ПДн и оферту
+    for consent_type in ("pd_processing", "oferta"):
+        session.add(
+            UserConsent(
+                user_id=user.id,
+                consent_type=consent_type,
+                ip_address=client_ip,
+                user_agent=user_agent[:500] if user_agent else None,
+            )
+        )
+
     await session.commit()
     await session.refresh(user)
     return user
@@ -190,3 +210,87 @@ async def logout(
         path="/auth",
         domain=settings.cookie_domain,
     )
+
+
+# ============================================================
+# ФЗ-152: Согласия на обработку ПДн
+# ============================================================
+
+
+@router.get("/consent/status", response_model=ConsentStatusResponse)
+async def consent_status(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ConsentStatusResponse:
+    """Статус всех согласий текущего пользователя."""
+    result = await session.scalars(
+        select(UserConsent)
+        .where(UserConsent.user_id == current_user.id)
+        .order_by(UserConsent.granted_at)
+    )
+    consents = [ConsentRead.model_validate(c) for c in result.all()]
+    return ConsentStatusResponse(consents=consents)
+
+
+@router.post("/consent/accept", response_model=ConsentRead)
+async def consent_accept(
+    payload: ConsentAcceptRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserConsent:
+    """Принять согласие (или обновить после отзыва)."""
+    # Ищем существующее согласие
+    existing = await session.scalar(
+        select(UserConsent).where(
+            UserConsent.user_id == current_user.id,
+            UserConsent.consent_type == payload.consent_type,
+        )
+    )
+
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent", "")[:500] or None
+
+    if existing is None:
+        consent = UserConsent(
+            user_id=current_user.id,
+            consent_type=payload.consent_type,
+            ip_address=client_ip,
+            user_agent=user_agent,
+        )
+        session.add(consent)
+    else:
+        # Обновляем: снимаем revoked_at, обновляем granted_at
+        existing.revoked_at = None
+        existing.granted_at = datetime.now(UTC)
+        existing.ip_address = client_ip
+        existing.user_agent = user_agent
+        consent = existing
+
+    await session.commit()
+    await session.refresh(consent)
+    return consent
+
+
+@router.delete("/consent/{consent_type}", response_model=ConsentRead)
+async def consent_revoke(
+    consent_type: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserConsent:
+    """Отозвать согласие (soft — фиксируем revoked_at)."""
+    consent = await session.scalar(
+        select(UserConsent).where(
+            UserConsent.user_id == current_user.id,
+            UserConsent.consent_type == consent_type,
+        )
+    )
+    if consent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Consent not found",
+        )
+    consent.revoked_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(consent)
+    return consent
