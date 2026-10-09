@@ -9,3 +9,4 @@ types-python-jose==3.3.4.20240106
 types-passlib==1.7.7.20240106
 # rebuild 2026-09-14: ensure yookassa installed
 aiosqlite
+boto3-stubs[sesv2]==1.43.110
