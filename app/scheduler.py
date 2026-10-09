@@ -6,6 +6,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
+from app.api_logger import set_log_context
 from app.crypto import decrypt
 from app.database import AsyncSessionLocal
 from app.models import (
@@ -17,7 +18,6 @@ from app.models import (
     TaxSettings,
     TelegramSubscription,
 )
-from app.api_logger import set_log_context
 from app.ozon_ads_client import OzonAdsClientError
 from app.ozon_client import OzonClient, OzonClientError
 from app.services.ozon_ads_sync import sync_ozon_ads

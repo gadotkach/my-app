@@ -7,10 +7,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api_logger import set_log_context
 from app.crypto import decrypt
 from app.database import AsyncSessionLocal
 from app.models import Marketplace, MarketplaceAccount
-from app.api_logger import set_log_context
 from app.scheduler import sync_ozon_for_account, sync_wb_for_account
 
 logger = logging.getLogger(__name__)
