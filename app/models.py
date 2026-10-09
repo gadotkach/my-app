@@ -44,6 +44,8 @@ class User(Base):
     subscription_ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Защита от вечного trial: причина отмены (например, "marketplace_already_used")
+    trial_revoked_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # ФЗ-152: soft delete (30 дней до hard delete)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True

@@ -82,6 +82,7 @@ async def record_marketplace_usage(
     # Магазин уже использовался другим юзером
     if user.subscription_status == "trialing":
         user.subscription_status = "none"
+        user.trial_revoked_reason = "marketplace_already_used"
         await session.commit()
 
         # Уведомление (best-effort)
