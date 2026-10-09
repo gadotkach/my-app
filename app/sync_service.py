@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crypto import decrypt
 from app.database import AsyncSessionLocal
 from app.models import Marketplace, MarketplaceAccount
+from app.api_logger import set_log_context
 from app.scheduler import sync_ozon_for_account, sync_wb_for_account
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def _run_ozon_sync(user_id: int, account_id: int) -> None:
             client_id = account.client_id
             marketplace_id = account.marketplace_id
 
+        set_log_context(user_id=user_id, marketplace="ozon")
         stats = await sync_ozon_for_account(
             user_id=user_id,
             client_id=client_id,
@@ -100,6 +102,7 @@ async def _run_wb_sync(user_id: int, account_id: int, kind: str) -> None:
             api_key = decrypt(account.api_key_encrypted)
             marketplace_id = account.marketplace_id
 
+        set_log_context(user_id=user_id, marketplace="wildberries")
         stats = await sync_wb_for_account(
             user_id=user_id,
             api_key=api_key,

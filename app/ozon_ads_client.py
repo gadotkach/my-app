@@ -16,6 +16,8 @@ from typing import Any
 
 import httpx
 
+from app.api_logger import log_request, log_response
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +50,10 @@ class OzonAdsClient:
             base_url=self.BASE_URL,
             timeout=timeout,
             headers={"Content-Type": "application/json"},
+            event_hooks={
+                "request": [log_request],
+                "response": [log_response],
+            },
         )
 
     async def __aenter__(self) -> "OzonAdsClient":

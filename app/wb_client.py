@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from app.api_logger import log_request, log_response
+
 
 class WBClientError(Exception):
     """Ошибка при обращении к Wildberries API."""
@@ -35,7 +37,14 @@ class WBClient:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        async with httpx.AsyncClient(base_url=base_url, timeout=self._timeout) as client:
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=self._timeout,
+            event_hooks={
+                "request": [log_request],
+                "response": [log_response],
+            },
+        ) as client:
             response = await client.get(path, headers=self._headers(), params=params or {})
         return self._handle_response(response)
 
@@ -45,7 +54,14 @@ class WBClient:
         path: str,
         payload: dict[str, Any],
     ) -> Any:
-        async with httpx.AsyncClient(base_url=base_url, timeout=self._timeout) as client:
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=self._timeout,
+            event_hooks={
+                "request": [log_request],
+                "response": [log_response],
+            },
+        ) as client:
             response = await client.post(path, headers=self._headers(), json=payload)
         return self._handle_response(response)
 

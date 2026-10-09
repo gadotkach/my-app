@@ -17,6 +17,7 @@ from app.models import (
     TaxSettings,
     TelegramSubscription,
 )
+from app.api_logger import set_log_context
 from app.ozon_ads_client import OzonAdsClientError
 from app.ozon_client import OzonClient, OzonClientError
 from app.services.ozon_ads_sync import sync_ozon_ads
@@ -40,6 +41,7 @@ async def sync_ozon_for_account(
 ) -> dict[str, int]:
     """Синхронизирует товары и продажи для одного Ozon-аккаунта."""
     stats = {"products_created": 0, "products_updated": 0, "sales_created": 0, "sales_updated": 0}
+    set_log_context(user_id=user_id, marketplace="ozon")
     async with OzonClient(client_id, api_key) as ozon:
         # --- Товары ---
         try:
@@ -224,6 +226,7 @@ async def sync_wb_for_account(
     Поэтому этот job запускается раз в 3 часа.
     """
     stats = {"products_created": 0, "products_updated": 0, "sales_created": 0, "sales_updated": 0}
+    set_log_context(user_id=user_id, marketplace="wildberries")
     wb = WBClient(api_key)
 
     # --- Товары ---
@@ -523,6 +526,7 @@ async def sync_ozon_ads_all_accounts() -> None:
             to_date = datetime.now(UTC).date()
             from_date = to_date - timedelta(days=7)
 
+            set_log_context(user_id=account.user_id, marketplace="ozon_ads")
             stats = await sync_ozon_ads(
                 user_id=account.user_id,
                 client_id=account.client_id,

@@ -3,6 +3,8 @@ from typing import Any, cast
 
 import httpx
 
+from app.api_logger import log_request, log_response
+
 
 class OzonClientError(Exception):
     """Ошибка при обращении к Ozon Seller API."""
@@ -21,6 +23,10 @@ class OzonClient:
                 "Client-Id": client_id,
                 "Api-Key": api_key,
                 "Content-Type": "application/json",
+            },
+            event_hooks={
+                "request": [log_request],
+                "response": [log_response],
             },
         )
 
