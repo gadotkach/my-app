@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crypto import decrypt, encrypt
 from app.deps import get_session, require_active_subscription
+from app.marketplaces.yandex_market import YandexMarketClient, YandexMarketClientError
 from app.models import Marketplace, MarketplaceAccount, Product, Sale, User
 from app.ozon_client import OzonClient, OzonClientError
 from app.schemas import (
@@ -17,6 +18,7 @@ from app.schemas import (
     OzonSyncSalesResult,
     WBSyncResult,
     WBSyncSalesResult,
+    YandexMarketConnect,
 )
 from app.sync_service import trigger_sync_if_stale
 from app.wb_client import WBClient, WBClientError
@@ -671,3 +673,70 @@ async def sync_if_stale(
     Возвращает: {"triggered": [...], "skipped": [...]}
     """
     return await trigger_sync_if_stale(current_user.id, session)
+
+
+# ============================================================
+# Яндекс.Маркет
+# ============================================================
+
+
+@router.post(
+    "/yandex-market/connect",
+    response_model=MarketplaceAccountRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def connect_yandex_market(
+    payload: YandexMarketConnect,
+    current_user: User = Depends(require_active_subscription),
+    session: AsyncSession = Depends(get_session),
+) -> MarketplaceAccountRead:
+    marketplace = await session.scalar(
+        select(Marketplace).where(Marketplace.code == "yandex_market")
+    )
+    if marketplace is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Marketplace 'yandex_market' not found in database",
+        )
+
+    try:
+        async with YandexMarketClient(payload.api_key, payload.business_id) as ym:
+            ok = await ym.verify_credentials()
+            if not ok:
+                raise YandexMarketClientError("Яндекс.Маркет: неверный токен")
+    except YandexMarketClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    existing = await session.scalar(
+        select(MarketplaceAccount).where(
+            MarketplaceAccount.user_id == current_user.id,
+            MarketplaceAccount.marketplace_id == marketplace.id,
+        )
+    )
+
+    if existing is not None:
+        existing.client_id = payload.business_id
+        existing.api_key_encrypted = encrypt(payload.api_key)
+        await session.commit()
+        await session.refresh(existing)
+        account = existing
+    else:
+        account = MarketplaceAccount(
+            user_id=current_user.id,
+            marketplace_id=marketplace.id,
+            client_id=payload.business_id,
+            api_key_encrypted=encrypt(payload.api_key),
+        )
+        session.add(account)
+        await session.commit()
+        await session.refresh(account)
+
+    return MarketplaceAccountRead(
+        id=account.id,
+        marketplace_code="yandex_market",
+        client_id=account.client_id,
+        created_at=account.created_at,
+    )

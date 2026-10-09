@@ -4,6 +4,7 @@
 """
 
 from app.marketplaces.registry import MarketplaceRegistry
+from app.marketplaces.yandex_market import YandexMarketClient
 
 # Импорт клиентов (регистрация через явный вызов ниже)
 from app.ozon_ads_client import OzonAdsClient
@@ -14,3 +15,4 @@ from app.wb_client import WBClient
 MarketplaceRegistry.register(OzonClient)
 MarketplaceRegistry.register(WBClient)
 MarketplaceRegistry.register(OzonAdsClient)
+MarketplaceRegistry.register(YandexMarketClient)

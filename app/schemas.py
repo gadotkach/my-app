@@ -178,6 +178,13 @@ class MarketplaceAccountConnect(BaseModel):
     api_key: str
 
 
+class YandexMarketConnect(BaseModel):
+    """Яндекс.Маркет: api_key + опциональный business_id."""
+
+    api_key: str
+    business_id: str | None = None
+
+
 class MarketplaceAccountRead(BaseModel):
     id: int
     marketplace_code: str
