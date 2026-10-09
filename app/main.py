@@ -75,10 +75,10 @@ app.include_router(delivery_services.router)
 app.include_router(products.router)
 app.include_router(sales.router)
 app.include_router(analytics.router)
+app.include_router(ozon_ads.router)  # до integrations (специфичный путь /integrations/ozon-ads/*)
 app.include_router(integrations.router)
 app.include_router(tax_settings.router)
 app.include_router(advertising.router)
-app.include_router(ozon_ads.router)
 app.include_router(notifications.router)
 
 
