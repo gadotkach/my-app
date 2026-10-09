@@ -6,6 +6,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -319,3 +320,27 @@ class TelegramSubscription(Base):
     )
 
     user: Mapped["User"] = relationship()
+
+
+class ApiRequestLog(Base):
+    """Лог API-запросов к маркетплейсам (для аудита и оптимизации).
+
+    Записывается через httpx event hooks (асинхронно, без блокировки).
+    """
+
+    __tablename__ = "api_request_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    marketplace: Mapped[str] = mapped_column(String(50), index=True)
+    method: Mapped[str] = mapped_column(String(10))
+    endpoint: Mapped[str] = mapped_column(String(255), index=True)
+    status_code: Mapped[int] = mapped_column(Integer, index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
