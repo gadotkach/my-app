@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api_logger import set_log_context
 from app.crypto import decrypt
 from app.database import AsyncSessionLocal
-from app.models import Marketplace, MarketplaceAccount
+from app.models import Marketplace, MarketplaceAccount, User
 from app.scheduler import sync_ozon_for_account, sync_wb_for_account
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,28 @@ def _is_stale(last_sync: datetime | None, threshold_minutes: int) -> bool:
     if last_sync.tzinfo is None:
         last_sync = last_sync.replace(tzinfo=UTC)
     return (datetime.now(UTC) - last_sync) > timedelta(minutes=threshold_minutes)
+
+
+async def _get_ozon_threshold(user_id: int) -> int:
+    """Адаптивный порог Ozon по активности юзера.
+
+    Активный (< 24ч) → 30 мин.
+    Неактивный (1-7 дней) → 6 ч.
+    Спящий (> 7 дней или никогда) → 24 ч.
+    """
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if user is None or user.last_activity_at is None:
+            return 1440  # никогда не заходил → 24 ч
+        last = user.last_activity_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        delta = datetime.now(UTC) - last
+        if delta < timedelta(hours=24):
+            return 30  # активный → 30 мин
+        if delta < timedelta(days=7):
+            return 360  # неактивный → 6 ч
+        return 1440  # спящий → 24 ч
 
 
 async def _update_last_sync(account_id: int) -> None:
@@ -133,7 +155,8 @@ async def trigger_sync_if_stale(user_id: int, session: AsyncSession) -> dict[str
 
     for account, marketplace_code in rows:
         if marketplace_code == "ozon":
-            if _is_stale(account.last_sync_at, STALE_THRESHOLDS["ozon"]):
+            ozon_threshold = await _get_ozon_threshold(user_id)
+            if _is_stale(account.last_sync_at, ozon_threshold):
                 asyncio.create_task(_run_ozon_sync(user_id, account.id))
                 triggered.append("ozon")
             else:

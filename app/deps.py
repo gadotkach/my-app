@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -38,6 +39,16 @@ async def get_current_user(
     user = await session.get(User, user_id)
     if user is None:
         raise credentials_exception
+
+    # Обновляем last_activity_at раз в 5 минут (не на каждый запрос)
+    now = datetime.now(UTC)
+    last = user.last_activity_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    if last is None or (now - last) > timedelta(minutes=5):
+        user.last_activity_at = now
+        await session.commit()
+
     return user
 
 
