@@ -41,6 +41,15 @@ class MarketplaceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MarketplaceWithMeta(MarketplaceRead):
+    """МП + метаданные для UI (генерация форм)."""
+
+    auth_fields: list[dict[str, str]] = []
+    has_products: bool = False
+    has_sales: bool = False
+    has_ads: bool = False
+
+
 class ProductCreate(BaseModel):
     sku: str
     name: str

@@ -1,50 +1,62 @@
+"""Клиент Ozon Seller API.
+
+Наследник BaseMarketplaceClient (расширяемая архитектура).
+"""
+
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-import httpx
-
-from app.api_logger import log_request, log_response
+from app.marketplaces.base import BaseMarketplaceClient, MarketplaceClientError
 
 
-class OzonClientError(Exception):
+class OzonClientError(MarketplaceClientError):
     """Ошибка при обращении к Ozon Seller API."""
 
 
-class OzonClient:
-    BASE_URL = "https://api-seller.ozon.ru"
+class OzonClient(BaseMarketplaceClient):
+    code = "ozon"
+    name = "Ozon"
+    base_url = "https://api-seller.ozon.ru"
+    default_timeout = 10.0
 
-    def __init__(self, client_id: str, api_key: str, timeout: float = 10.0):
+    auth_fields = [
+        {"name": "client_id", "label": "Client-Id", "type": "text"},
+        {"name": "api_key", "label": "API-Key", "type": "password"},
+    ]
+    has_products = True
+    has_sales = True
+    has_ads = False
+
+    def __init__(self, client_id: str, api_key: str, timeout: float | None = None):
         self.client_id = client_id
         self.api_key = api_key
-        self._client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            timeout=timeout,
-            headers={
-                "Client-Id": client_id,
-                "Api-Key": api_key,
-                "Content-Type": "application/json",
-            },
-            event_hooks={
-                "request": [log_request],
-                "response": [log_response],
-            },
-        )
+        super().__init__(timeout=timeout)
 
-    async def __aenter__(self) -> "OzonClient":
-        return self
+    def _get_headers(self) -> dict[str, str]:
+        return {
+            "Client-Id": self.client_id,
+            "Api-Key": self.api_key,
+            "Content-Type": "application/json",
+        }
 
-    async def __aexit__(self, *args: Any) -> None:
-        await self._client.aclose()
+    def _make_error(self, status_code: int, message: str) -> OzonClientError:
+        if status_code == 401:
+            return OzonClientError("Ozon: неверный Client-Id или Api-Key")
+        if status_code == 403:
+            return OzonClientError("Ozon: доступ запрещён (проверьте права Api-Key)")
+        return OzonClientError(f"Ozon API error {status_code}: {message}")
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        raise NotImplementedError("Ozon Seller API не использует GET")
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert self._client is not None  # use_single_client=True
         response = await self._client.post(path, json=payload)
-        if response.status_code == 401:
-            raise OzonClientError("Ozon: неверный Client-Id или Api-Key")
-        if response.status_code == 403:
-            raise OzonClientError("Ozon: доступ запрещён (проверьте права Api-Key)")
-        if response.status_code >= 400:
-            raise OzonClientError(f"Ozon API error {response.status_code}: {response.text[:200]}")
-        return cast(dict[str, Any], response.json())
+        return cast(dict[str, Any], self._handle_response(response))
+
+    # --------------------------------------------------------
+    # Специфика Ozon
+    # --------------------------------------------------------
 
     async def get_seller_info(self) -> dict[str, Any]:
         """Проверка ключей — возвращает информацию о продавце."""
@@ -61,8 +73,6 @@ class OzonClient:
             data = await self._post("/v3/product/list", payload)
             items = data.get("result", {}).get("items", [])
             result.extend(items)
-            # Если товаров меньше limit — это последняя страница
-            # (Ozon иногда возвращает last_id, даже когда товары закончились)
             if len(items) < limit:
                 break
             last_id = data.get("result", {}).get("last_id", "")
@@ -71,7 +81,7 @@ class OzonClient:
         return result
 
     async def get_product_info(self, product_ids: list[int]) -> list[dict[str, Any]]:
-        """Детальная информация по товарам (название, SKU, описание)."""
+        """Детальная информация по товарам."""
         if not product_ids:
             return []
         data = await self._post(
@@ -86,7 +96,7 @@ class OzonClient:
         to: str,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """Список FBS-отправлений за период. Ozon отдаёт постранично."""
+        """Список FBS-отправлений за период."""
         result: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -111,7 +121,7 @@ class OzonClient:
         since: str,
         to: str,
     ) -> list[dict[str, Any]]:
-        """Список отправлений за длинный период — разбивает на интервалы по 30 дней."""
+        """Список отправлений за длинный период (30-дневные интервалы)."""
         start = datetime.fromisoformat(since.replace("Z", "+00:00"))
         end = datetime.fromisoformat(to.replace("Z", "+00:00"))
         if start.tzinfo is None:
@@ -138,7 +148,7 @@ class OzonClient:
         to: str,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """Список FBO-отправлений за период (товары со склада Ozon)."""
+        """Список FBO-отправлений за период."""
         result: list[dict[str, Any]] = []
         offset = 0
         while True:
@@ -164,7 +174,7 @@ class OzonClient:
         since: str,
         to: str,
     ) -> list[dict[str, Any]]:
-        """FBO-отправления за длинный период — разбивает на интервалы по 30 дней."""
+        """FBO-отправления за длинный период (30-дневные интервалы)."""
         start = datetime.fromisoformat(since.replace("Z", "+00:00"))
         end = datetime.fromisoformat(to.replace("Z", "+00:00"))
         if start.tzinfo is None:

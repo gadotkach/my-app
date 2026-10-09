@@ -1,9 +1,8 @@
 """Клиент Ozon Performance API (Ozon Ads).
 
-Авторизация: client_id + client_secret -> access_token (живёт 30 мин).
+Наследник BaseMarketplaceClient (расширяемая архитектура).
+Авторизация: client_id + client_secret -> access_token (30 мин).
 Кеш токена — на уровне класса (per client_id).
-
-Документация: https://docs.ozon.ru/api/performance/
 """
 
 import asyncio
@@ -14,25 +13,29 @@ import time
 from datetime import date
 from typing import Any
 
-import httpx
-
-from app.api_logger import log_request, log_response
+from app.marketplaces.base import BaseMarketplaceClient, MarketplaceClientError
 
 logger = logging.getLogger(__name__)
 
 
-class OzonAdsClientError(Exception):
+class OzonAdsClientError(MarketplaceClientError):
     """Ошибка при обращении к Ozon Performance API."""
 
 
-class OzonAdsClient:
-    """Клиент Ozon Performance API.
+class OzonAdsClient(BaseMarketplaceClient):
+    code = "ozon_ads"
+    name = "Ozon Ads"
+    base_url = "https://api-performance.ozon.ru"
+    default_timeout = 30.0
+    use_single_client = True
 
-    Хост: api-performance.ozon.ru
-    Авторизация: client_id + client_secret -> Bearer token (30 мин).
-    """
-
-    BASE_URL = "https://api-performance.ozon.ru"
+    auth_fields = [
+        {"name": "client_id", "label": "Client-Id", "type": "text"},
+        {"name": "client_secret", "label": "Client-Secret", "type": "password"},
+    ]
+    has_products = False
+    has_sales = False
+    has_ads = True
 
     # Кеш токенов: {client_id: (token, expires_at_epoch)}
     _token_cache: dict[str, tuple[str, float]] = {}
@@ -41,26 +44,26 @@ class OzonAdsClient:
         self,
         client_id: str,
         client_secret: str,
-        timeout: float = 30.0,
+        timeout: float | None = None,
     ):
         self.client_id = client_id
         self.client_secret = client_secret
-        self._timeout = timeout
-        self._client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            timeout=timeout,
-            headers={"Content-Type": "application/json"},
-            event_hooks={
-                "request": [log_request],
-                "response": [log_response],
-            },
-        )
+        super().__init__(timeout=timeout)
 
-    async def __aenter__(self) -> "OzonAdsClient":
-        return self
+    def _get_headers(self) -> dict[str, str]:
+        # Базовые заголовки (Authorization добавляется в _get/_post)
+        return {"Content-Type": "application/json"}
 
-    async def __aexit__(self, *args: Any) -> None:
-        await self._client.aclose()
+    def _make_error(self, status_code: int, message: str) -> OzonAdsClientError:
+        if status_code == 401:
+            return OzonAdsClientError("Ozon Ads: не авторизован (401)")
+        if status_code == 403:
+            return OzonAdsClientError("Ozon Ads: доступ запрещён (403)")
+        if status_code == 404:
+            return OzonAdsClientError("Ozon Ads: не найдено (404)")
+        if status_code == 429:
+            return OzonAdsClientError("Ozon Ads: превышен лимит запросов (429)")
+        return OzonAdsClientError(f"Ozon Ads error {status_code}: {message}")
 
     # --------------------------------------------------------
     # Авторизация
@@ -74,6 +77,7 @@ class OzonAdsClient:
             if time.time() < expires_at - 60:
                 return token
 
+        assert self._client is not None  # use_single_client=True
         response = await self._client.post(
             "/api/client/token",
             json={
@@ -85,8 +89,6 @@ class OzonAdsClient:
 
         if response.status_code == 401:
             raise OzonAdsClientError("Ozon Ads: неверный client_id или client_secret (401)")
-        if response.status_code == 403:
-            raise OzonAdsClientError("Ozon Ads: доступ запрещён (403) — проверьте права ключа")
         if response.status_code >= 400:
             raise OzonAdsClientError(
                 f"Ozon Ads: ошибка авторизации {response.status_code}: " f"{response.text[:200]}"
@@ -103,10 +105,11 @@ class OzonAdsClient:
         return token
 
     # --------------------------------------------------------
-    # Общие обёртки
+    # Обёртки с auth
     # --------------------------------------------------------
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        assert self._client is not None
         token = await self._get_token()
         response = await self._client.get(
             path,
@@ -116,6 +119,7 @@ class OzonAdsClient:
         return self._handle_response(response)
 
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
+        assert self._client is not None
         token = await self._get_token()
         response = await self._client.post(
             path,
@@ -123,24 +127,6 @@ class OzonAdsClient:
             json=payload,
         )
         return self._handle_response(response)
-
-    @staticmethod
-    def _handle_response(response: httpx.Response) -> Any:
-        if response.status_code == 401:
-            raise OzonAdsClientError("Ozon Ads: не авторизован (401)")
-        if response.status_code == 403:
-            raise OzonAdsClientError("Ozon Ads: доступ запрещён (403)")
-        if response.status_code == 404:
-            raise OzonAdsClientError("Ozon Ads: не найдено (404)")
-        if response.status_code == 429:
-            raise OzonAdsClientError("Ozon Ads: превышен лимит запросов (429)")
-        if response.status_code >= 400:
-            raise OzonAdsClientError(
-                f"Ozon Ads error {response.status_code}: {response.text[:200]}"
-            )
-        if not response.content:
-            return {}
-        return response.json()
 
     # --------------------------------------------------------
     # Кампании
@@ -152,7 +138,6 @@ class OzonAdsClient:
         page_size: int = 100,
         state: str = "CAMPAIGN_STATE_RUNNING",
     ) -> list[dict[str, Any]]:
-        """Список кампаний. По умолчанию — только активные."""
         params: dict[str, Any] = {"page": page, "pageSize": page_size}
         if state:
             params["state"] = state
@@ -160,7 +145,6 @@ class OzonAdsClient:
         return data.get("list", []) if isinstance(data, dict) else []
 
     async def list_all_campaigns(self) -> list[dict[str, Any]]:
-        """Все активные кампании (со всех страниц)."""
         result: list[dict[str, Any]] = []
         page = 1
         while True:
@@ -174,7 +158,7 @@ class OzonAdsClient:
         return result
 
     # --------------------------------------------------------
-    # Статистика (отчёты)
+    # Статистика
     # --------------------------------------------------------
 
     async def create_statistics_report(
@@ -184,7 +168,6 @@ class OzonAdsClient:
         date_to: date,
         group_by: str = "DATE",
     ) -> str:
-        """Создать задачу на отчёт. Возвращает UUID."""
         if not campaigns:
             raise OzonAdsClientError("Ozon Ads: список кампаний пуст")
         if len(campaigns) > 10:
@@ -203,7 +186,6 @@ class OzonAdsClient:
         return str(uuid_raw)
 
     async def get_report_status(self, uuid: str) -> dict[str, Any]:
-        """Статус отчёта: NOT_STARTED / IN_PROGRESS / OK / ERROR."""
         data = await self._get(f"/api/client/statistics/{uuid}")
         return data if isinstance(data, dict) else {}
 
@@ -213,7 +195,6 @@ class OzonAdsClient:
         timeout_sec: int = 60,
         poll_interval: float = 3.0,
     ) -> dict[str, Any]:
-        """Ждать готовности отчёта (polling каждые 3 секунды)."""
         started = time.time()
         while time.time() - started < timeout_sec:
             status = await self.get_report_status(uuid)
@@ -229,6 +210,7 @@ class OzonAdsClient:
 
     async def download_report_csv(self, uuid: str) -> str:
         """Скачать готовый отчёт (только одиночная кампания — CSV, не ZIP)."""
+        assert self._client is not None
         token = await self._get_token()
         response = await self._client.get(
             "/api/client/statistics/report",
@@ -249,13 +231,7 @@ class OzonAdsClient:
 
     @staticmethod
     def parse_csv_report(csv_text: str) -> list[dict[str, Any]]:
-        """Парсинг CSV-отчёта Ozon Ads.
-
-        Гибкий: ищет колонки по ключевым словам:
-        - «Расход» -> expense
-        - «Date» / «Дата» -> date
-        - «Кампания» + «ID» -> campaign_id
-        """
+        """Парсинг CSV-отчёта Ozon Ads (гибкий — по ключевым словам)."""
         reader = csv.DictReader(io.StringIO(csv_text), delimiter=";")
         result: list[dict[str, Any]] = []
 
@@ -305,7 +281,6 @@ class OzonAdsClient:
     # --------------------------------------------------------
 
     async def verify_credentials(self) -> bool:
-        """True, если client_id + client_secret рабочие."""
         try:
             await self._get_token()
         except OzonAdsClientError:

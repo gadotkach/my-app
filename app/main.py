@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.deps import get_session
+
+# Регистрация маркетплейсов (side-effect)
+from app.marketplaces import bootstrap  # noqa: F401
 from app.middleware.audit import AuditMiddleware
 from app.routers import (
     advertising,
