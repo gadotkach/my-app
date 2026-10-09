@@ -194,3 +194,46 @@ Trial Agregators отменён
 Если вы считаете это ошибкой — напишите: support@agregators.su
 """
     await send_email(to=to, subject=subject, html_body=html, text_body=text)
+
+
+async def send_email_verification_email(to: str, verify_url: str) -> None:
+    """Письмо с ссылкой для подтверждения email (double opt-in)."""
+    subject = "Подтвердите email в Agregators"
+    html = f"""\
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #2563eb;">Подтвердите email</h2>
+  <p>Спасибо за регистрацию в Agregators!</p>
+  <p>Нажмите кнопку ниже, чтобы подтвердить ваш email:</p>
+  <p style="margin: 24px 0;">
+    <a href="{verify_url}"
+       style="display: inline-block; padding: 12px 24px; background: #2563eb;
+              color: #fff; text-decoration: none; border-radius: 6px;">
+      Подтвердить email
+    </a>
+  </p>
+  <p style="color: #6b7280; font-size: 14px;">
+    Ссылка действует <strong>24 часа</strong>.<br>
+    Если вы не регистрировались — просто проигнорируйте это письмо.
+  </p>
+  <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+  <p style="color: #9ca3af; font-size: 12px;">
+    Это автоматическое письмо от Agregators. Не отвечайте на него.
+  </p>
+</body>
+</html>
+"""
+    text = f"""\
+Подтвердите email в Agregators
+
+Спасибо за регистрацию!
+
+Перейдите по ссылке, чтобы подтвердить email:
+{verify_url}
+
+Ссылка действует 24 часа.
+
+Если вы не регистрировались — проигнорируйте письмо.
+"""
+    await send_email(to=to, subject=subject, html_body=html, text_body=text)

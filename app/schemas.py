@@ -693,3 +693,21 @@ class ResetPasswordResponse(BaseModel):
     """Успешный сброс пароля."""
 
     detail: str = "Пароль успешно изменён."
+
+
+class VerifyEmailRequest(BaseModel):
+    """Подтверждение email по токену."""
+
+    token: str
+
+
+class VerifyEmailResponse(BaseModel):
+    """Успешное подтверждение email."""
+
+    detail: str = "Email успешно подтверждён."
+
+
+class ResendVerificationResponse(BaseModel):
+    """Повторная отправка письма."""
+
+    detail: str = "Если email не подтверждён — письмо отправлено повторно."

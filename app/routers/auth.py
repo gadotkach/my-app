@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.deps import get_current_user, get_session
 from app.email_client import (
+    send_email_verification_email,
     send_password_changed_email,
     send_password_reset_email,
 )
 from app.models import (
+    EmailVerificationToken,
     PasswordResetToken,
     RefreshToken,
     TrialIdentity,
@@ -28,11 +30,14 @@ from app.schemas import (
     ForgotPasswordResponse,
     LoginRequest,
     RefreshResponse,
+    ResendVerificationResponse,
     ResetPasswordRequest,
     ResetPasswordResponse,
     Token,
     UserCreate,
     UserRead,
+    VerifyEmailRequest,
+    VerifyEmailResponse,
 )
 from app.security import (
     create_access_token,
@@ -593,3 +598,110 @@ async def reset_password(
         logger.exception("Failed to send password changed email to %s", user.email)
 
     return ResetPasswordResponse()
+
+
+# ============================================================
+# Email Verification (double opt-in)
+# ============================================================
+
+
+def _hash_email_token(token: str) -> str:
+    """SHA-256 хеш токена подтверждения email."""
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _create_email_verification_token(
+    session: AsyncSession,
+    user: User,
+) -> str:
+    """Создаёт токен подтверждения email и возвращает raw-токен."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_email_token(raw_token)
+    expires_at = datetime.now(UTC) + timedelta(hours=24)
+
+    session.add(
+        EmailVerificationToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+    return raw_token
+
+
+@router.post(
+    "/verify-email",
+    response_model=VerifyEmailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def verify_email(
+    payload: VerifyEmailRequest,
+    session: AsyncSession = Depends(get_session),
+) -> VerifyEmailResponse:
+    """Подтверждение email по токену из письма."""
+    token_hash = _hash_email_token(payload.token)
+
+    record = await session.scalar(
+        select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка недействительна или устарела",
+        )
+
+    if record.used_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка уже использована",
+        )
+
+    now = datetime.now(UTC)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ссылка истекла. Запросите новую.",
+        )
+
+    user = await session.scalar(select(User).where(User.id == record.user_id))
+    if user is None or user.deleted_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Аккаунт недоступен",
+        )
+
+    user.email_verified = True
+    record.used_at = now
+    await session.commit()
+
+    return VerifyEmailResponse()
+
+
+@router.post(
+    "/resend-verification",
+    response_model=ResendVerificationResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def resend_verification(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResendVerificationResponse:
+    """Повторная отправка письма для подтверждения email."""
+    if current_user.email_verified:
+        return ResendVerificationResponse(detail="Email уже подтверждён.")
+
+    raw_token = await _create_email_verification_token(session, current_user)
+    verify_url = f"{settings.frontend_base_url.rstrip('/')}/verify-email?token={raw_token}"
+
+    try:
+        await send_email_verification_email(to=current_user.email, verify_url=verify_url)
+    except Exception:
+        logger.exception("Failed to send verification email to %s", current_user.email)
+
+    return ResendVerificationResponse()
