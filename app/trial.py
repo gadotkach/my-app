@@ -1,9 +1,13 @@
 import hashlib
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.email_client import send_trial_revoked_email
 from app.models import UsedMarketplaceIdentity, User
+
+logger = logging.getLogger(__name__)
 
 
 def hash_identity(ip: str, user_agent: str) -> str:
@@ -79,6 +83,13 @@ async def record_marketplace_usage(
     if user.subscription_status == "trialing":
         user.subscription_status = "none"
         await session.commit()
+
+        # Уведомление (best-effort)
+        try:
+            await send_trial_revoked_email(to=user.email)
+        except Exception:
+            logger.exception("Failed to send trial revoked email to %s", user.email)
+
         return True
 
     return True

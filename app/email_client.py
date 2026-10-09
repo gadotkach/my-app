@@ -139,3 +139,58 @@ async def send_password_changed_email(to: str) -> None:
 Если это были не вы — срочно напишите: support@agregators.su
 """
     await send_email(to=to, subject=subject, html_body=html, text_body=text)
+
+
+async def send_trial_revoked_email(to: str) -> None:
+    """Уведомление: trial отменён, т.к. магазин уже использовался.
+
+    Отправляется, когда пользователь подключает маркетплейс,
+    который уже был использован другим аккаунтом (по client_id/api_key).
+    """
+    subject = "Trial Agregators отменён"
+    html = """\
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #dc2626;">Trial отменён</h2>
+  <p>К сожалению, ваш пробный период был отменён.</p>
+  <p><strong>Причина:</strong> подключённый вами магазин (Ozon или Wildberries)
+  уже использовался в пробном периоде другого аккаунта Agregators.</p>
+  <p style="color: #6b7280; font-size: 14px;">
+    Мы предоставляем trial один раз на один магазин — это защита от
+    недобросовестного использования.
+  </p>
+  <p style="margin: 24px 0;">
+    <a href="https://agregators.su/pricing"
+       style="display: inline-block; padding: 12px 24px; background: #2563eb;
+              color: #fff; text-decoration: none; border-radius: 6px;">
+      Подключить подписку 990 ₽/мес
+    </a>
+  </p>
+  <p style="color: #6b7280; font-size: 14px;">
+    Если вы считаете это ошибкой — напишите нам:
+    <a href="mailto:support@agregators.su">support@agregators.su</a>
+  </p>
+  <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+  <p style="color: #9ca3af; font-size: 12px;">
+    Это автоматическое письмо от Agregators. Не отвечайте на него.
+  </p>
+</body>
+</html>
+"""
+    text = """\
+Trial Agregators отменён
+
+К сожалению, ваш пробный период был отменён.
+
+Причина: подключённый вами магазин (Ozon или Wildberries) уже использовался
+в пробном периоде другого аккаунта Agregators.
+
+Мы предоставляем trial один раз на один магазин — это защита от
+недобросовестного использования.
+
+Подключить подписку 990 ₽/мес: https://agregators.su/pricing
+
+Если вы считаете это ошибкой — напишите: support@agregators.su
+"""
+    await send_email(to=to, subject=subject, html_body=html, text_body=text)
