@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     yandex_oauth_client_id: str = ""
     yandex_oauth_client_secret: str = ""
     yandex_oauth_redirect_uri: str = "https://api.agregators.su/auth/yandex/callback"
+
+    # Frontend base URL (для редиректов после OAuth)
+    frontend_base_url: str = "https://agregators.su"
     yookassa_return_url: str = "https://my-app-frontend-biz.pages.dev/pricing"
 
     model_config = {"env_file": ".env", "extra": "ignore"}

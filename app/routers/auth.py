@@ -1,6 +1,8 @@
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,10 +27,19 @@ from app.security import (
     verify_password,
 )
 from app.trial import hash_email, hash_identity
+from app.yandex_oauth import (
+    build_authorize_url,
+    exchange_code,
+    extract_email,
+    extract_name,
+    fetch_user_info,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 REFRESH_COOKIE_NAME = "refresh_token"
+YANDEX_STATE_COOKIE_NAME = "yandex_oauth_state"
+YANDEX_STATE_MAX_AGE = 600  # 10 минут
 
 
 async def _issue_tokens(
@@ -314,3 +325,139 @@ async def consent_revoke(
     await session.commit()
     await session.refresh(consent)
     return consent
+
+
+# ============================================================
+# Яндекс ID (OAuth)
+# ============================================================
+
+
+@router.get("/yandex/redirect")
+async def yandex_redirect(
+    from_: str = "/",
+) -> RedirectResponse:
+    """Редирект на Яндекс ID для авторизации.
+
+    Генерирует state, сохраняет его в HttpOnly cookie (CSRF-защита).
+    """
+    state = secrets.token_urlsafe(32)
+    authorize_url = build_authorize_url(state)
+
+    response = RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key=YANDEX_STATE_COOKIE_NAME,
+        value=state,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=YANDEX_STATE_MAX_AGE,
+        path="/auth",
+        domain=settings.cookie_domain,
+    )
+    return response
+
+
+@router.get("/yandex/callback")
+async def yandex_callback(
+    request: Request,
+    response: Response,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    yandex_state: str | None = Cookie(default=None, alias=YANDEX_STATE_COOKIE_NAME),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Callback от Яндекса — обмен кода на токен, поиск/создание юзера, выдача JWT."""
+    frontend_url = settings.frontend_base_url.rstrip("/")
+
+    # Если пользователь отказался или Яндекс вернул ошибку
+    if error or not code:
+        return RedirectResponse(url=f"{frontend_url}/login?error=oauth_cancelled", status_code=302)
+
+    # CSRF-защита: state из query vs state из cookie
+    if not state or not yandex_state or state != yandex_state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid state parameter (CSRF)",
+        )
+
+    # Обмен кода на access_token
+    try:
+        access_token = await exchange_code(code)
+        user_info = await fetch_user_info(access_token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Yandex OAuth error: {e!s}",
+        ) from e
+
+    email = extract_email(user_info)
+    name = extract_name(user_info)
+    yandex_id = str(user_info.get("id") or "")
+
+    if not email or not yandex_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Yandex did not provide email or id",
+        )
+
+    # Логика связки (A/B/C)
+    # A. Уже есть юзер с таким yandex_id
+    user = await session.scalar(select(User).where(User.yandex_id == yandex_id))
+
+    if user is None:
+        # B. Есть юзер с таким email — привязываем yandex_id
+        user = await session.scalar(select(User).where(User.email == email))
+        if user is not None:
+            user.yandex_id = yandex_id
+            await session.commit()
+        else:
+            # C. Новый юзер
+            client_ip = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "")
+
+            user = User(
+                email=email,
+                name=name,
+                hashed_password="",  # OAuth — без пароля
+                yandex_id=yandex_id,
+                subscription_status="trialing",
+                trial_started_at=datetime.now(UTC),
+                trial_ends_at=datetime.now(UTC) + timedelta(days=settings.trial_period_days),
+            )
+            session.add(user)
+            await session.flush()
+
+            # ФЗ-152: согласия
+            for consent_type in ("pd_processing", "oferta"):
+                session.add(
+                    UserConsent(
+                        user_id=user.id,
+                        consent_type=consent_type,
+                        ip_address=client_ip,
+                        user_agent=user_agent[:500] if user_agent else None,
+                    )
+                )
+            await session.commit()
+            await session.refresh(user)
+
+    # Выдача токенов (используем общий хелпер)
+    request.state.user_id = user.id
+    tokens = await _issue_tokens(user.id, session, response)
+
+    # Редирект на фронт с access_token в fragment (не в query — чтобы не попадал в логи)
+    redirect_url = f"{frontend_url}/auth/yandex/complete#access_token={tokens.access_token}"
+    redirect = RedirectResponse(url=redirect_url, status_code=302)
+
+    # Удаляем state cookie
+    redirect.delete_cookie(
+        key=YANDEX_STATE_COOKIE_NAME,
+        path="/auth",
+        domain=settings.cookie_domain,
+    )
+    # Переносим refresh cookie (её поставил _issue_tokens в `response`, но мы возвращаем `redirect`)
+    if REFRESH_COOKIE_NAME in response.headers.get("set-cookie", ""):
+        for header in response.headers.getlist("set-cookie"):
+            redirect.headers.append("set-cookie", header)
+
+    return redirect
